@@ -39,32 +39,46 @@ You can also use `DAYTONA_JWT_TOKEN` with `DAYTONA_ORGANIZATION_ID`, plus option
 
 ## Usage
 
+The easiest API is `daytona.action`. You define a regular Convex action, but
+the handler function runs as JavaScript in a Daytona sandbox.
+
 ```ts
 import { DaytonaRunner } from "@convex-dev/daytona";
 import { v } from "convex/values";
 import { components } from "./_generated/api.js";
-import { action } from "./_generated/server.js";
 
 const daytona = new DaytonaRunner(components.daytona, {
   defaultCreate: {
     ephemeral: true,
-    language: "typescript",
+    language: "javascript",
     autoStopInterval: 15,
   },
 });
 
-export const runInDaytona = action({
+export const runInDaytona = daytona.action({
   args: { name: v.string() },
-  handler: async (ctx, args) => {
-    return await daytona.runAction(ctx, {
-      kind: "code",
-      language: "typescript",
-      code: `console.log("hello ${args.name} from Daytona")`,
-      timeout: 30,
-    });
+  returns: v.object({
+    greeting: v.string(),
+    node: v.string(),
+  }),
+  timeout: 30,
+  handler: async ({ name }) => {
+    const os = await import("node:os");
+    return {
+      greeting: `hello ${name} from Daytona`,
+      node: `${process.version} on ${os.platform()}`,
+    };
   },
 });
 ```
+
+Inside a `daytona.action` handler you can use Node globals, `fetch`, dynamic
+`import(...)`, or `require(...)`. The handler is serialized and executed in
+Daytona, so keep it self-contained: do not close over app variables or imported
+helpers. Pass data through `args`, `env`, or a reused sandbox instead.
+
+Lower-level APIs are available when you want explicit control from a normal
+Convex action.
 
 Run a shell command:
 

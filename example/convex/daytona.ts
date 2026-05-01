@@ -7,21 +7,25 @@ const daytona = new DaytonaRunner(components.daytona, {
   defaultCreate: {
     autoStopInterval: 15,
     ephemeral: true,
-    language: "typescript",
+    language: "javascript",
   },
 });
 
-export const runTypeScript = action({
+export const greet = daytona.action({
   args: {
     name: v.string(),
   },
-  handler: async (ctx, args) => {
-    return await daytona.runAction(ctx, {
-      kind: "code",
-      code: `console.log("hello ${args.name} from Daytona")`,
-      language: "typescript",
-      timeout: 30,
-    });
+  returns: v.object({
+    greeting: v.string(),
+    node: v.string(),
+  }),
+  timeout: 30,
+  handler: async ({ name }) => {
+    const os = await import("node:os");
+    return {
+      greeting: `hello ${name} from Daytona`,
+      node: `${process.version} on ${os.platform()}`,
+    };
   },
 });
 
