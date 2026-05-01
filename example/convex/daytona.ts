@@ -20,7 +20,7 @@ export const greet = daytona.action({
     node: v.string(),
   }),
   timeout: 30,
-  handler: async ({ name }) => {
+  handler: async (_ctx, { name }) => {
     const os = await import("node:os");
     return {
       greeting: `hello ${name} from Daytona`,

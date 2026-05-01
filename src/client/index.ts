@@ -2,7 +2,11 @@ import {
   actionGeneric,
   type ArgsArrayForOptionalValidator,
   type ArgsArrayToObject,
+  createFunctionHandle,
   type DefaultArgsForOptionalValidator,
+  type FunctionHandle,
+  type FunctionReference,
+  type FunctionVisibility,
   type GenericActionCtx,
   type GenericDataModel,
   type RegisteredAction,
@@ -85,22 +89,50 @@ export type DaytonaActionOptions =
 
 export type DaytonaRunnerOptions = {
   auth?: DaytonaAuth;
+  callbackSecret?: string;
+  callbackUrl?: string;
   defaultCreate?: CreateSandboxOptions;
   deleteSandboxAfter?: boolean;
 };
 
+type DaytonaCallableType = "query" | "mutation" | "action";
+
+type DaytonaCallableReference<Type extends DaytonaCallableType> =
+  FunctionReference<Type, FunctionVisibility, any, any>;
+
+export type DaytonaActionFunctions = {
+  queries?: Record<string, DaytonaCallableReference<"query">>;
+  mutations?: Record<string, DaytonaCallableReference<"mutation">>;
+  actions?: Record<string, DaytonaCallableReference<"action">>;
+};
+
 export type DaytonaActionRuntimeOptions = {
   auth?: DaytonaAuth;
+  callbackSecret?: string;
+  callbackUrl?: string;
   create?: Omit<CreateSandboxOptions, "language">;
   createTimeout?: number;
   deleteSandboxAfter?: boolean;
   deleteTimeout?: number;
   env?: Record<string, string>;
+  functions?: DaytonaActionFunctions;
   sandboxId?: string;
   timeout?: number;
 };
 
 export type DaytonaActionContext = {
+  runAction: <Return = unknown>(
+    name: string,
+    args?: Record<string, unknown>,
+  ) => Promise<Return>;
+  runMutation: <Return = unknown>(
+    name: string,
+    args?: Record<string, unknown>,
+  ) => Promise<Return>;
+  runQuery: <Return = unknown>(
+    name: string,
+    args?: Record<string, unknown>,
+  ) => Promise<Return>;
   env: Record<string, string | undefined>;
   require: (id: string) => unknown;
   __dirname: string;
@@ -122,7 +154,8 @@ export type DaytonaActionDefinition<
   args?: ArgsValidator;
   returns?: ReturnsValidator;
   handler: (
-    ...args: [...OneOrZeroArgs, DaytonaActionContext]
+    ctx: DaytonaActionContext,
+    ...args: OneOrZeroArgs
   ) => ReturnValue | Promise<ReturnValue>;
 };
 
@@ -235,12 +268,17 @@ export class DaytonaRunner {
       args: definition.args as any,
       returns: definition.returns as any,
       handler: async (ctx, actionArgs: unknown = {}) => {
+        const callback = await this.callback(definition);
         const result = await this.runCode(ctx, {
           auth: definition.auth,
           argv: [],
           code: buildDaytonaActionCode(
-            definition.handler as (...args: any[]) => unknown,
+            definition.handler as (
+              ctx: DaytonaActionContext,
+              ...args: any[]
+            ) => unknown,
             actionArgs,
+            callback,
           ),
           create: {
             ...definition.create,
@@ -297,14 +335,53 @@ export class DaytonaRunner {
     }
     return auth;
   }
+
+  private async callback(args: DaytonaActionRuntimeOptions) {
+    if (!hasFunctions(args.functions)) {
+      return undefined;
+    }
+
+    const callbackUrl =
+      args.callbackUrl ??
+      this.options.callbackUrl ??
+      process.env.DAYTONA_CALLBACK_URL ??
+      defaultCallbackUrl();
+    const callbackSecret =
+      args.callbackSecret ??
+      this.options.callbackSecret ??
+      process.env.DAYTONA_CALLBACK_SECRET;
+
+    if (!callbackUrl || !callbackSecret) {
+      throw new Error(
+        "To use ctx.runQuery/runMutation/runAction from a Daytona action, set DAYTONA_CALLBACK_URL and DAYTONA_CALLBACK_SECRET, or pass callbackUrl/callbackSecret to DaytonaRunner.",
+      );
+    }
+
+    return {
+      functions: await createFunctionHandleMaps(args.functions),
+      secret: callbackSecret,
+      url: callbackUrl,
+    };
+  }
 }
 
+type DaytonaSerializedCallbacks = {
+  functions: {
+    actions: Record<string, string>;
+    mutations: Record<string, string>;
+    queries: Record<string, string>;
+  };
+  secret: string;
+  url: string;
+};
+
 function buildDaytonaActionCode(
-  handler: (...args: any[]) => unknown,
+  handler: (ctx: DaytonaActionContext, ...args: any[]) => unknown,
   args: unknown,
+  callback: DaytonaSerializedCallbacks | undefined,
 ) {
   const source = handler.toString();
-  const payload = base64EncodeUtf8(JSON.stringify({ args }));
+  const payload = base64EncodeUtf8(JSON.stringify({ args, callback }));
   return `
 (async () => {
   const __marker = ${JSON.stringify(DAYTONA_ACTION_RESULT_MARKER)};
@@ -314,19 +391,57 @@ function buildDaytonaActionCode(
     name: error instanceof Error ? error.name : "Error",
     stack: error instanceof Error ? error.stack : undefined,
   });
+  const __callConvex = async (kind, name, args = {}) => {
+    const callback = __payload.callback;
+    if (!callback) {
+      throw new Error("No Daytona callback bridge is configured for this action.");
+    }
+    const collections = {
+      action: callback.functions.actions,
+      mutation: callback.functions.mutations,
+      query: callback.functions.queries,
+    };
+    const handle = collections[kind]?.[name];
+    if (!handle) {
+      throw new Error("Daytona action cannot run " + kind + " '" + name + "'. Add it to the action's functions map.");
+    }
+    const response = await fetch(callback.url, {
+      method: "POST",
+      headers: {
+        "authorization": "Bearer " + callback.secret,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ kind, handle, args }),
+    });
+    const text = await response.text();
+    let payload;
+    try {
+      payload = text.length ? JSON.parse(text) : null;
+    } catch (error) {
+      throw new Error("Invalid Convex callback response: " + text);
+    }
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.error?.message ?? ("Convex callback failed with HTTP " + response.status));
+    }
+    return payload.value ?? null;
+  };
 
   try {
     const { createRequire } = await import("node:module");
     const require = createRequire(process.cwd() + "/daytona-action.js");
     const __dirname = process.cwd();
     const __filename = __dirname + "/daytona-action.js";
-    const __handler = (${source});
-    const __value = await __handler(__payload.args, {
+    const __ctx = {
+      runAction: (name, args) => __callConvex("action", name, args),
+      runMutation: (name, args) => __callConvex("mutation", name, args),
+      runQuery: (name, args) => __callConvex("query", name, args),
       env: process.env,
       require,
       __dirname,
       __filename,
-    });
+    };
+    const __handler = (${source});
+    const __value = await __handler(__ctx, __payload.args);
     console.log(__marker + JSON.stringify({
       ok: true,
       value: __value === undefined ? null : __value,
@@ -393,6 +508,151 @@ function parseDaytonaActionResult(output: string, exitCode: number) {
   }
 
   return payload.value ?? null;
+}
+
+async function createFunctionHandleMaps(functions?: DaytonaActionFunctions) {
+  return {
+    actions: await createFunctionHandleMap(functions?.actions),
+    mutations: await createFunctionHandleMap(functions?.mutations),
+    queries: await createFunctionHandleMap(functions?.queries),
+  };
+}
+
+async function createFunctionHandleMap<Type extends DaytonaCallableType>(
+  functions?: Record<string, DaytonaCallableReference<Type>>,
+) {
+  const entries = await Promise.all(
+    Object.entries(functions ?? {}).map(async ([name, reference]) => [
+      name,
+      await createFunctionHandle(reference),
+    ]),
+  );
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function hasFunctions(functions?: DaytonaActionFunctions) {
+  return (
+    functions !== undefined &&
+    (Object.keys(functions.queries ?? {}).length > 0 ||
+      Object.keys(functions.mutations ?? {}).length > 0 ||
+      Object.keys(functions.actions ?? {}).length > 0)
+  );
+}
+
+function defaultCallbackUrl() {
+  const siteUrl = process.env.CONVEX_SITE_URL;
+  if (!siteUrl) {
+    return undefined;
+  }
+  return `${siteUrl.replace(/\/$/, "")}/daytona/callback`;
+}
+
+export type DaytonaCallbackOptions = {
+  secret?: string;
+};
+
+export function daytonaCallback(options: DaytonaCallbackOptions = {}) {
+  return async (
+    ctx: Pick<
+      GenericActionCtx<GenericDataModel>,
+      "runAction" | "runMutation" | "runQuery"
+    >,
+    request: Request,
+  ) => {
+    const secret = options.secret ?? process.env.DAYTONA_CALLBACK_SECRET;
+    if (!secret) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: { message: "DAYTONA_CALLBACK_SECRET is not configured." },
+        },
+        500,
+      );
+    }
+    if (request.headers.get("authorization") !== `Bearer ${secret}`) {
+      return jsonResponse(
+        { ok: false, error: { message: "Unauthorized." } },
+        401,
+      );
+    }
+
+    let body: {
+      args?: Record<string, unknown>;
+      handle?: string;
+      kind?: DaytonaCallableType;
+    };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch (error) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: { message: "Invalid JSON callback request." },
+        },
+        400,
+      );
+    }
+
+    if (
+      body.kind !== "query" &&
+      body.kind !== "mutation" &&
+      body.kind !== "action"
+    ) {
+      return jsonResponse(
+        { ok: false, error: { message: "Invalid callback kind." } },
+        400,
+      );
+    }
+    if (typeof body.handle !== "string") {
+      return jsonResponse(
+        { ok: false, error: { message: "Missing callback function handle." } },
+        400,
+      );
+    }
+
+    try {
+      const args = body.args ?? {};
+      const value =
+        body.kind === "query"
+          ? await ctx.runQuery(
+              body.handle as FunctionHandle<"query">,
+              args as any,
+            )
+          : body.kind === "mutation"
+            ? await ctx.runMutation(
+                body.handle as FunctionHandle<"mutation">,
+                args as any,
+              )
+            : await ctx.runAction(
+                body.handle as FunctionHandle<"action">,
+                args as any,
+              );
+      return jsonResponse({ ok: true, value: value ?? null }, 200);
+    } catch (error) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: serializeError(error),
+        },
+        500,
+      );
+    }
+  };
+}
+
+function jsonResponse(body: unknown, status: number) {
+  return new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json" },
+    status,
+  });
+}
+
+function serializeError(error: unknown) {
+  return {
+    message: error instanceof Error ? error.message : String(error),
+    name: error instanceof Error ? error.name : "Error",
+    stack: error instanceof Error ? error.stack : undefined,
+  };
 }
 
 function mergeCreate(

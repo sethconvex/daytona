@@ -62,7 +62,7 @@ export const runInDaytona = daytona.action({
     node: v.string(),
   }),
   timeout: 30,
-  handler: async ({ name }) => {
+  handler: async (_ctx, { name }) => {
     const os = await import("node:os");
     return {
       greeting: `hello ${name} from Daytona`,
@@ -75,7 +75,72 @@ export const runInDaytona = daytona.action({
 Inside a `daytona.action` handler you can use Node globals, `fetch`, dynamic
 `import(...)`, or `require(...)`. The handler is serialized and executed in
 Daytona, so keep it self-contained: do not close over app variables or imported
-helpers. Pass data through `args`, `env`, or a reused sandbox instead.
+helpers. Pass data through `args`, `env`, `functions`, or a reused sandbox
+instead.
+
+## Calling Back Into Convex
+
+To use `ctx.runQuery`, `ctx.runMutation`, or `ctx.runAction` from Daytona,
+mount the callback bridge once in `convex/http.ts`:
+
+```ts
+import { daytonaCallback } from "@convex-dev/daytona";
+import { httpRouter } from "convex/server";
+import { httpAction } from "./_generated/server.js";
+
+const http = httpRouter();
+
+http.route({
+  path: "/daytona/callback",
+  method: "POST",
+  handler: httpAction(daytonaCallback()),
+});
+
+export default http;
+```
+
+Set a shared secret:
+
+```sh
+npx convex env set DAYTONA_CALLBACK_SECRET your_random_secret
+```
+
+The action helper defaults the callback URL to
+`${CONVEX_SITE_URL}/daytona/callback`. You can also pass `callbackUrl` and
+`callbackSecret` to `new DaytonaRunner(...)`, or set `DAYTONA_CALLBACK_URL`.
+
+Register the functions this Daytona action is allowed to call, then call them
+by name from the Daytona-side `ctx`:
+
+```ts
+import { DaytonaRunner } from "@convex-dev/daytona";
+import { v } from "convex/values";
+import { components, internal } from "./_generated/api.js";
+
+const daytona = new DaytonaRunner(components.daytona);
+
+export const enrichUser = daytona.action({
+  args: { userId: v.id("users") },
+  returns: v.null(),
+  functions: {
+    queries: {
+      getUser: internal.users.get,
+    },
+    mutations: {
+      saveProfile: internal.users.saveProfile,
+    },
+  },
+  handler: async (ctx, { userId }) => {
+    const user = await ctx.runQuery<{ email: string }>("getUser", { userId });
+    const profile = await fetch(`https://example.com/profile/${user.email}`);
+    await ctx.runMutation("saveProfile", {
+      userId,
+      profile: await profile.json(),
+    });
+    return null;
+  },
+});
+```
 
 Lower-level APIs are available when you want explicit control from a normal
 Convex action.
