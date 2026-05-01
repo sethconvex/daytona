@@ -72,9 +72,6 @@ export type DaytonaCommandOutput = {
   timestamp: number;
 };
 
-/** @deprecated Use DaytonaCommandOutput. */
-export type DaytonaCommandChunk = DaytonaCommandOutput;
-
 export type DaytonaCommandArtifact = {
   contentType: string;
   path: string;
@@ -100,16 +97,6 @@ export type DaytonaCommandSandbox = {
 export type DaytonaCommandOutputOptions = {
   lineBuffered?: boolean;
   onOutput?: FunctionReference<
-    "mutation",
-    FunctionVisibility,
-    DaytonaCommandOutput,
-    unknown
-  >;
-};
-
-export type DaytonaCommandStream = DaytonaCommandOutputOptions & {
-  /** @deprecated Use onOutput. */
-  onChunk?: FunctionReference<
     "mutation",
     FunctionVisibility,
     DaytonaCommandOutput,
@@ -150,7 +137,6 @@ export type RunCommandOptions = {
   sandbox?: DaytonaCommandSandbox;
   sandboxId?: string;
   seedDownloadUrl?: string;
-  stream?: DaytonaCommandStream;
   timeout?: number;
 };
 
@@ -279,9 +265,9 @@ export type DaytonaActionDefinition<
     capture?: DaytonaCommandCapture;
     cwd?: string;
     files?: DaytonaStagedFile[];
+    output?: DaytonaCommandOutputOptions;
     sandbox?: Omit<CreateSandboxOptions, "language">;
     seedDownloadUrl?: string;
-    stream?: DaytonaCommandStream;
     returns?: ReturnsValidator;
     handler: (
       ctx: DaytonaActionContext,
@@ -483,9 +469,9 @@ export class DaytonaRunner {
             },
           ],
           install: normalizeInstall(definition),
+          output: definition.output,
           sandboxId: definition.sandboxId,
           seedDownloadUrl: definition.seedDownloadUrl,
-          stream: definition.stream,
           timeout: definition.timeout,
         });
         return parseDaytonaActionResult(
@@ -512,18 +498,6 @@ export class DaytonaRunner {
             path: args.capture.path,
             uploadUrl: args.capture.uploadUrl,
           };
-    const stream =
-      args.stream === undefined
-        ? undefined
-        : {
-            lineBuffered: args.stream.lineBuffered,
-            onChunk:
-              (args.stream.onChunk ?? args.stream.onOutput) === undefined
-                ? undefined
-                : await createFunctionHandle(
-                    (args.stream.onChunk ?? args.stream.onOutput)!,
-                  ),
-          };
     const output =
       args.output === undefined
         ? undefined
@@ -548,7 +522,6 @@ export class DaytonaRunner {
               create: mergeCreate(this.options.defaultCreate, args.sandbox.create),
             },
       output,
-      stream,
     };
   }
 

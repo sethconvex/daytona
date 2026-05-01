@@ -122,11 +122,6 @@ const executeResultValidator = v.object({
   stderr: v.optional(v.string()),
 });
 
-const streamValidator = v.object({
-  lineBuffered: v.optional(v.boolean()),
-  onChunk: v.optional(v.string()),
-});
-
 const captureValidator = v.object({
   onArtifact: v.optional(v.string()),
   path: v.string(),
@@ -162,7 +157,6 @@ type StagedFile = Infer<typeof stagedFileValidator>;
 type PackageInstall = Infer<typeof packageInstallValidator>;
 type CaptureArgs = Infer<typeof captureValidator>;
 type OutputArgs = Infer<typeof outputValidator>;
-type StreamArgs = Infer<typeof streamValidator>;
 type CallbackArgs = Infer<typeof callbackValidator>;
 type CommandSandboxArgs = Infer<typeof commandSandboxValidator>;
 
@@ -242,7 +236,6 @@ type CommandSpec = {
   output?: OutputArgs;
   sandboxId?: string;
   seedDownloadUrl?: string;
-  stream?: StreamArgs;
   timeout?: number;
 };
 
@@ -318,7 +311,6 @@ export const runCommand = action({
     sandbox: v.optional(commandSandboxValidator),
     sandboxId: v.optional(v.string()),
     seedDownloadUrl: v.optional(v.string()),
-    stream: v.optional(streamValidator),
     timeout: v.optional(v.number()),
   },
   returns: runResultValidator,
@@ -344,12 +336,12 @@ export const runCommand = action({
         install: spec.install,
         seedDownloadUrl: spec.seedDownloadUrl,
       });
-      result = spec.output?.onOutput || spec.stream?.onChunk
+      result = spec.output?.onOutput
         ? await executeStreamingCommand(ctx, sandbox, {
             command: spec.command,
             cwd: spec.cwd,
             env,
-            output: normalizeOutput(spec.output, spec.stream),
+            output: spec.output,
             timeout: spec.timeout,
           })
         : await sandbox.process.executeCommand(
@@ -398,7 +390,6 @@ export const startCommand = action({
     sandbox: v.optional(commandSandboxValidator),
     sandboxId: v.optional(v.string()),
     seedDownloadUrl: v.optional(v.string()),
-    stream: v.optional(streamValidator),
     timeout: v.optional(v.number()),
   },
   returns: v.object({ jobId: v.id("jobs") }),
@@ -495,7 +486,6 @@ export const runJob = internalAction({
       sandbox: v.optional(commandSandboxValidator),
       sandboxId: v.optional(v.string()),
       seedDownloadUrl: v.optional(v.string()),
-      stream: v.optional(streamValidator),
       timeout: v.optional(v.number()),
     }),
     jobId: v.id("jobs"),
@@ -530,23 +520,14 @@ export const runJob = internalAction({
         install: spec.install,
         seedDownloadUrl: spec.seedDownloadUrl,
       });
-      const output = normalizeOutput(spec.output, spec.stream);
-      const result =
-        output.onOutput || true
-          ? await executeStreamingCommand(ctx, sandbox, {
-              command: spec.command,
-              cwd: spec.cwd,
-              env,
-              jobId,
-              output,
-              timeout: spec.timeout,
-            })
-          : await sandbox.process.executeCommand(
-              spec.command,
-              spec.cwd,
-              env,
-              spec.timeout,
-            );
+      const result = await executeStreamingCommand(ctx, sandbox, {
+        command: spec.command,
+        cwd: spec.cwd,
+        env,
+        jobId,
+        output: spec.output ?? {},
+        timeout: spec.timeout,
+      });
       const artifact =
         spec.capture === undefined
           ? undefined
@@ -737,7 +718,6 @@ function normalizeCommandSpec(args: {
   sandbox?: CommandSandboxArgs;
   sandboxId?: string;
   seedDownloadUrl?: string;
-  stream?: StreamArgs;
   timeout?: number;
 }): CommandSpec {
   return {
@@ -753,7 +733,6 @@ function normalizeCommandSpec(args: {
     output: args.output,
     sandboxId: args.sandbox?.id ?? args.sandboxId,
     seedDownloadUrl: args.sandbox?.seedDownloadUrl ?? args.seedDownloadUrl,
-    stream: args.stream,
     timeout: args.timeout,
   };
 }
@@ -1005,13 +984,6 @@ function createStreamEmitter(
         emit(stream, `${line}\n`);
       }
     },
-  };
-}
-
-function normalizeOutput(output?: OutputArgs, stream?: StreamArgs): OutputArgs {
-  return {
-    lineBuffered: output?.lineBuffered ?? stream?.lineBuffered,
-    onOutput: output?.onOutput ?? stream?.onChunk,
   };
 }
 

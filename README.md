@@ -156,7 +156,7 @@ export const enrichUser = daytona.defineAction({
 ## Commands
 
 Use `runCommand` when you want a command-shaped primitive. It accepts one
-spec with sandbox input, streaming, capture, and callback auth in predictable
+spec with sandbox input, output callbacks, capture, and callback auth in predictable
 places:
 
 ```ts
@@ -216,9 +216,6 @@ The output mutation receives:
   timestamp: number,
 }
 ```
-
-`stream.onChunk` is still accepted as a compatibility alias for
-`output.onOutput`.
 
 The artifact mutation receives:
 

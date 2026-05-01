@@ -72,11 +72,6 @@ type DaytonaCommandSandbox = {
   seedDownloadUrl?: string;
 };
 
-type DaytonaCommandStream = {
-  lineBuffered?: boolean;
-  onChunk?: string;
-};
-
 type DaytonaCommandOutput = {
   lineBuffered?: boolean;
   onOutput?: string;
@@ -213,7 +208,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           sandbox?: DaytonaCommandSandbox;
           sandboxId?: string;
           seedDownloadUrl?: string;
-          stream?: DaytonaCommandStream;
           timeout?: number;
         },
         RunResult,
@@ -239,7 +233,6 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           sandbox?: DaytonaCommandSandbox;
           sandboxId?: string;
           seedDownloadUrl?: string;
-          stream?: DaytonaCommandStream;
           timeout?: number;
         },
         { jobId: string },
