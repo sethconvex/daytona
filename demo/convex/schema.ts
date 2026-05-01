@@ -1,0 +1,44 @@
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+
+export default defineSchema({
+  jobs: defineTable({
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    durationMs: v.optional(v.number()),
+    error: v.optional(v.string()),
+    exitCode: v.optional(v.number()),
+    output: v.string(),
+    sandboxId: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("succeeded"),
+      v.literal("failed"),
+      v.literal("canceled"),
+    ),
+    updatedAt: v.number(),
+  }),
+  outputEvents: defineTable({
+    content: v.string(),
+    runId: v.string(),
+    sandboxId: v.string(),
+    sequence: v.number(),
+    stream: v.union(v.literal("stdout"), v.literal("stderr")),
+    timestamp: v.number(),
+  })
+    .index("by_run", ["runId"])
+    .index("by_time", ["timestamp"]),
+  artifacts: defineTable({
+    contentType: v.string(),
+    path: v.string(),
+    size: v.number(),
+    storageId: v.optional(v.string()),
+    uploadUrl: v.optional(v.string()),
+  }),
+  facts: defineTable({
+    key: v.string(),
+    value: v.string(),
+  }).index("by_key", ["key"]),
+});

@@ -39,6 +39,12 @@ You can also use `DAYTONA_JWT_TOKEN` with `DAYTONA_ORGANIZATION_ID`, plus option
 
 ## Usage
 
+Want to see the API shape in an app first? See the runnable demo in
+[`demo/`](./demo). It includes a Vite UI, a Convex backend, explicit npm
+package install, durable jobs, cancellation, DB context, and artifact records.
+The demo runs the Daytona SDK from `"use node"` app actions because Convex
+components cannot currently execute Node runtime code directly.
+
 The easiest API is `daytona.defineAction`. You define a regular Convex action,
 but the handler function runs as JavaScript in a Node process inside a Daytona
 sandbox.
