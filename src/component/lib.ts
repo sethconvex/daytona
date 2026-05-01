@@ -6,10 +6,18 @@ import {
   type CreateSandboxFromSnapshotParams,
   type DaytonaConfig,
 } from "@daytona/sdk";
+import { anyApi } from "convex/server";
 import { v, type Infer } from "convex/values";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { action } from "./_generated/server.js";
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server.js";
+
+const internalApi = (anyApi as any).lib;
 
 const recordOfStrings = v.record(v.string(), v.string());
 
@@ -38,6 +46,14 @@ const stagedFileValidator = v.object({
   encoding: v.optional(v.union(v.literal("utf8"), v.literal("base64"))),
   mode: v.optional(v.string()),
   path: v.string(),
+});
+
+const packageInstallValidator = v.object({
+  command: v.optional(v.string()),
+  manager: v.optional(
+    v.union(v.literal("npm"), v.literal("pnpm"), v.literal("yarn")),
+  ),
+  packages: v.optional(v.array(v.string())),
 });
 
 const createSandboxValidator = v.object({
@@ -71,6 +87,11 @@ const commandSandboxValidator = v.object({
   files: v.optional(v.array(stagedFileValidator)),
   id: v.optional(v.string()),
   seedDownloadUrl: v.optional(v.string()),
+});
+
+const outputValidator = v.object({
+  lineBuffered: v.optional(v.boolean()),
+  onOutput: v.optional(v.string()),
 });
 
 const sandboxSummaryValidator = v.object({
@@ -138,7 +159,9 @@ const runResultValidator = v.object({
 type DaytonaAuth = Infer<typeof authValidator>;
 type CreateSandboxArgs = Infer<typeof createSandboxValidator>;
 type StagedFile = Infer<typeof stagedFileValidator>;
+type PackageInstall = Infer<typeof packageInstallValidator>;
 type CaptureArgs = Infer<typeof captureValidator>;
+type OutputArgs = Infer<typeof outputValidator>;
 type StreamArgs = Infer<typeof streamValidator>;
 type CallbackArgs = Infer<typeof callbackValidator>;
 type CommandSandboxArgs = Infer<typeof commandSandboxValidator>;
@@ -215,6 +238,8 @@ type CommandSpec = {
   deleteAfter?: boolean;
   env?: Record<string, string>;
   files?: StagedFile[];
+  install?: PackageInstall;
+  output?: OutputArgs;
   sandboxId?: string;
   seedDownloadUrl?: string;
   stream?: StreamArgs;
@@ -227,6 +252,7 @@ export const createSandbox = action({
     create: v.optional(createSandboxValidator),
     createTimeout: v.optional(v.number()),
     files: v.optional(v.array(stagedFileValidator)),
+    install: v.optional(packageInstallValidator),
     seedDownloadUrl: v.optional(v.string()),
   },
   returns: sandboxSummaryValidator,
@@ -239,6 +265,7 @@ export const createSandbox = action({
     );
     await stageSandbox(sandbox, {
       files: args.files,
+      install: args.install,
       seedDownloadUrl: args.seedDownloadUrl,
     });
     return summarizeSandbox(sandbox);
@@ -286,6 +313,8 @@ export const runCommand = action({
     deleteTimeout: v.optional(v.number()),
     env: v.optional(recordOfStrings),
     files: v.optional(v.array(stagedFileValidator)),
+    install: v.optional(packageInstallValidator),
+    output: v.optional(outputValidator),
     sandbox: v.optional(commandSandboxValidator),
     sandboxId: v.optional(v.string()),
     seedDownloadUrl: v.optional(v.string()),
@@ -312,14 +341,15 @@ export const runCommand = action({
       await stageSandbox(sandbox, {
         cwd: spec.cwd,
         files: spec.files,
+        install: spec.install,
         seedDownloadUrl: spec.seedDownloadUrl,
       });
-      result = spec.stream?.onChunk
+      result = spec.output?.onOutput || spec.stream?.onChunk
         ? await executeStreamingCommand(ctx, sandbox, {
             command: spec.command,
             cwd: spec.cwd,
             env,
-            stream: spec.stream,
+            output: normalizeOutput(spec.output, spec.stream),
             timeout: spec.timeout,
           })
         : await sandbox.process.executeCommand(
@@ -347,6 +377,288 @@ export const runCommand = action({
       result: normalizeExecuteResult(result),
       sandbox: summarizeSandbox(sandbox),
     });
+  },
+});
+
+export const startCommand = action({
+  args: {
+    auth: authValidator,
+    callback: v.optional(callbackValidator),
+    capture: v.optional(captureValidator),
+    command: v.string(),
+    create: v.optional(createSandboxValidator),
+    createTimeout: v.optional(v.number()),
+    cwd: v.optional(v.string()),
+    deleteSandboxAfter: v.optional(v.boolean()),
+    deleteTimeout: v.optional(v.number()),
+    env: v.optional(recordOfStrings),
+    files: v.optional(v.array(stagedFileValidator)),
+    install: v.optional(packageInstallValidator),
+    output: v.optional(outputValidator),
+    sandbox: v.optional(commandSandboxValidator),
+    sandboxId: v.optional(v.string()),
+    seedDownloadUrl: v.optional(v.string()),
+    stream: v.optional(streamValidator),
+    timeout: v.optional(v.number()),
+  },
+  returns: v.object({ jobId: v.id("jobs") }),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const jobId = await ctx.runMutation(internalApi.createJob, { now });
+    await ctx.scheduler.runAfter(0, internalApi.runJob, { args, jobId });
+    return { jobId };
+  },
+});
+
+export const getJob = internalQuery({
+  args: { jobId: v.id("jobs") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      artifact: v.optional(artifactValidator),
+      completedAt: v.optional(v.number()),
+      createdAt: v.number(),
+      durationMs: v.optional(v.number()),
+      error: v.optional(v.string()),
+      exitCode: v.optional(v.number()),
+      jobId: v.id("jobs"),
+      output: v.string(),
+      sandboxId: v.optional(v.string()),
+      startedAt: v.optional(v.number()),
+      status: v.union(
+        v.literal("queued"),
+        v.literal("running"),
+        v.literal("succeeded"),
+        v.literal("failed"),
+        v.literal("canceled"),
+      ),
+      updatedAt: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job) {
+      return null;
+    }
+    return { ...job, jobId: job._id };
+  },
+});
+
+export const cancelJob = internalMutation({
+  args: { jobId: v.id("jobs"), now: v.optional(v.number()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job || job.status === "succeeded" || job.status === "failed") {
+      return null;
+    }
+    const now = args.now ?? Date.now();
+    await ctx.db.patch(args.jobId, {
+      completedAt: now,
+      durationMs: job.startedAt ? now - job.startedAt : undefined,
+      status: "canceled",
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
+export const createJob = internalMutation({
+  args: { now: v.number() },
+  returns: v.id("jobs"),
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("jobs", {
+      createdAt: args.now,
+      output: "",
+      status: "queued",
+      updatedAt: args.now,
+    });
+  },
+});
+
+export const runJob = internalAction({
+  args: {
+    args: v.object({
+      auth: authValidator,
+      callback: v.optional(callbackValidator),
+      capture: v.optional(captureValidator),
+      command: v.string(),
+      create: v.optional(createSandboxValidator),
+      createTimeout: v.optional(v.number()),
+      cwd: v.optional(v.string()),
+      deleteSandboxAfter: v.optional(v.boolean()),
+      deleteTimeout: v.optional(v.number()),
+      env: v.optional(recordOfStrings),
+      files: v.optional(v.array(stagedFileValidator)),
+      install: v.optional(packageInstallValidator),
+      output: v.optional(outputValidator),
+      sandbox: v.optional(commandSandboxValidator),
+      sandboxId: v.optional(v.string()),
+      seedDownloadUrl: v.optional(v.string()),
+      stream: v.optional(streamValidator),
+      timeout: v.optional(v.number()),
+    }),
+    jobId: v.id("jobs"),
+  },
+  returns: v.null(),
+  handler: async (ctx, { args, jobId }) => {
+    const queuedJob = await ctx.runQuery(internalApi.getJob, { jobId });
+    if (queuedJob?.status === "canceled") {
+      return null;
+    }
+    const spec = normalizeCommandSpec(args);
+    const daytona = makeDaytona(args.auth);
+    const { sandbox, createdSandbox } = await resolveSandbox(daytona, {
+      create: spec.create,
+      createTimeout: args.createTimeout,
+      sandboxId: spec.sandboxId,
+    });
+    const shouldDeleteSandbox = spec.deleteAfter ?? createdSandbox;
+    const callbackSecret = resolveCallbackSecret(spec.callback);
+    const env = addCallbackSecret(spec.env, spec.callback, callbackSecret);
+    const startedAt = Date.now();
+    await ctx.runMutation(internalApi.markJobRunning, {
+      jobId,
+      sandboxId: sandbox.id,
+      startedAt,
+    });
+    let deletedSandbox = false;
+    try {
+      await stageSandbox(sandbox, {
+        cwd: spec.cwd,
+        files: spec.files,
+        install: spec.install,
+        seedDownloadUrl: spec.seedDownloadUrl,
+      });
+      const output = normalizeOutput(spec.output, spec.stream);
+      const result =
+        output.onOutput || true
+          ? await executeStreamingCommand(ctx, sandbox, {
+              command: spec.command,
+              cwd: spec.cwd,
+              env,
+              jobId,
+              output,
+              timeout: spec.timeout,
+            })
+          : await sandbox.process.executeCommand(
+              spec.command,
+              spec.cwd,
+              env,
+              spec.timeout,
+            );
+      const artifact =
+        spec.capture === undefined
+          ? undefined
+          : await captureArtifact(ctx, sandbox, spec.capture);
+      await ctx.runMutation(internalApi.completeJob, {
+        artifact,
+        exitCode: result.exitCode,
+        jobId,
+        now: Date.now(),
+        status: result.exitCode === 0 ? "succeeded" : "failed",
+      });
+    } catch (error) {
+      await ctx.runMutation(internalApi.failJob, {
+        error: error instanceof Error ? error.message : String(error),
+        jobId,
+        now: Date.now(),
+      });
+    } finally {
+      if (shouldDeleteSandbox) {
+        await daytona.delete(sandbox, args.deleteTimeout);
+        deletedSandbox = true;
+      }
+      void deletedSandbox;
+    }
+    return null;
+  },
+});
+
+export const markJobRunning = internalMutation({
+  args: {
+    jobId: v.id("jobs"),
+    sandboxId: v.string(),
+    startedAt: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.jobId, {
+      sandboxId: args.sandboxId,
+      startedAt: args.startedAt,
+      status: "running",
+      updatedAt: args.startedAt,
+    });
+    return null;
+  },
+});
+
+export const appendJobOutput = internalMutation({
+  args: {
+    content: v.string(),
+    jobId: v.id("jobs"),
+    now: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job) {
+      return null;
+    }
+    await ctx.db.patch(args.jobId, {
+      output: `${job.output}${args.content}`,
+      updatedAt: args.now,
+    });
+    return null;
+  },
+});
+
+export const completeJob = internalMutation({
+  args: {
+    artifact: v.optional(artifactValidator),
+    exitCode: v.number(),
+    jobId: v.id("jobs"),
+    now: v.number(),
+    status: v.union(v.literal("succeeded"), v.literal("failed")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (job?.status === "canceled") {
+      return null;
+    }
+    await ctx.db.patch(args.jobId, {
+      artifact: args.artifact,
+      completedAt: args.now,
+      durationMs: job?.startedAt ? args.now - job.startedAt : undefined,
+      exitCode: args.exitCode,
+      status: args.status,
+      updatedAt: args.now,
+    });
+    return null;
+  },
+});
+
+export const failJob = internalMutation({
+  args: {
+    error: v.string(),
+    jobId: v.id("jobs"),
+    now: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (job?.status === "canceled") {
+      return null;
+    }
+    await ctx.db.patch(args.jobId, {
+      completedAt: args.now,
+      durationMs: job?.startedAt ? args.now - job.startedAt : undefined,
+      error: args.error,
+      status: "failed",
+      updatedAt: args.now,
+    });
+    return null;
   },
 });
 
@@ -420,6 +732,8 @@ function normalizeCommandSpec(args: {
   deleteSandboxAfter?: boolean;
   env?: Record<string, string>;
   files?: StagedFile[];
+  install?: PackageInstall;
+  output?: OutputArgs;
   sandbox?: CommandSandboxArgs;
   sandboxId?: string;
   seedDownloadUrl?: string;
@@ -435,6 +749,8 @@ function normalizeCommandSpec(args: {
     deleteAfter: args.sandbox?.deleteAfter ?? args.deleteSandboxAfter,
     env: args.env,
     files: args.sandbox?.files ?? args.files,
+    install: args.install,
+    output: args.output,
     sandboxId: args.sandbox?.id ?? args.sandboxId,
     seedDownloadUrl: args.sandbox?.seedDownloadUrl ?? args.seedDownloadUrl,
     stream: args.stream,
@@ -447,6 +763,7 @@ async function stageSandbox(
   args: {
     cwd?: string;
     files?: StagedFile[];
+    install?: PackageInstall;
     seedDownloadUrl?: string;
   },
 ) {
@@ -455,6 +772,9 @@ async function stageSandbox(
   }
   if (args.files?.length) {
     await uploadStagedFiles(sandbox, args.files, args.cwd);
+  }
+  if (args.install) {
+    await installPackages(sandbox, args.install, args.cwd);
   }
 }
 
@@ -501,6 +821,41 @@ async function uploadStagedFiles(
   );
 }
 
+async function installPackages(
+  sandbox: SandboxRuntime,
+  install: PackageInstall,
+  cwd?: string,
+) {
+  const command = install.command ?? buildPackageInstallCommand(install);
+  if (!command) {
+    return;
+  }
+  const result = await sandbox.process.executeCommand(command, cwd);
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to install packages: ${result.result || "unknown error"}`,
+    );
+  }
+}
+
+function buildPackageInstallCommand(install: PackageInstall) {
+  if (install.command) {
+    return install.command;
+  }
+  if (!install.packages?.length) {
+    return undefined;
+  }
+  const packages = install.packages.map(shellQuote).join(" ");
+  switch (install.manager ?? "npm") {
+    case "pnpm":
+      return `pnpm add ${packages}`;
+    case "yarn":
+      return `yarn add ${packages}`;
+    case "npm":
+      return `npm install ${packages}`;
+  }
+}
+
 async function executeStreamingCommand(
   ctx: { runMutation: (handle: any, args: any) => Promise<unknown> },
   sandbox: SandboxRuntime,
@@ -508,15 +863,17 @@ async function executeStreamingCommand(
     command: string;
     cwd?: string;
     env?: Record<string, string>;
-    stream: StreamArgs;
+    jobId?: string;
+    output: OutputArgs;
     timeout?: number;
   },
 ) {
   const runId = randomUUID();
   const sessionId = `daytona-${runId}`;
   const emitter = createStreamEmitter(ctx, {
-    lineBuffered: args.stream.lineBuffered ?? true,
-    onChunk: args.stream.onChunk,
+    jobId: args.jobId,
+    lineBuffered: args.output.lineBuffered ?? true,
+    onOutput: args.output.onOutput,
     runId,
     sandboxId: sandbox.id,
   });
@@ -582,8 +939,9 @@ async function waitForSessionCommandExit(
 function createStreamEmitter(
   ctx: { runMutation: (handle: any, args: any) => Promise<unknown> },
   args: {
+    jobId?: string;
     lineBuffered: boolean;
-    onChunk?: string;
+    onOutput?: string;
     runId: string;
     sandboxId: string;
   },
@@ -594,7 +952,7 @@ function createStreamEmitter(
   const output = { stderr: "", stdout: "" };
 
   const emit = (stream: "stderr" | "stdout", content: string) => {
-    if (!args.onChunk || content.length === 0) {
+    if (content.length === 0) {
       return;
     }
     const payload = {
@@ -606,9 +964,18 @@ function createStreamEmitter(
       timestamp: Date.now(),
     };
     sequence += 1;
-    pending = pending.then(() =>
-      ctx.runMutation(args.onChunk as any, payload).then(() => undefined),
-    );
+    pending = pending.then(async () => {
+      if (args.jobId) {
+        await ctx.runMutation(internalApi.appendJobOutput, {
+          content,
+          jobId: args.jobId,
+          now: Date.now(),
+        });
+      }
+      if (args.onOutput) {
+        await ctx.runMutation(args.onOutput as any, payload);
+      }
+    });
   };
 
   return {
@@ -638,6 +1005,13 @@ function createStreamEmitter(
         emit(stream, `${line}\n`);
       }
     },
+  };
+}
+
+function normalizeOutput(output?: OutputArgs, stream?: StreamArgs): OutputArgs {
+  return {
+    lineBuffered: output?.lineBuffered ?? stream?.lineBuffered,
+    onOutput: output?.onOutput ?? stream?.onChunk,
   };
 }
 

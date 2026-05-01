@@ -64,6 +64,7 @@ export const analyzeRepo = daytona.defineAction({
     files: v.array(v.string()),
   }),
   sandbox: { image: "node:22" },
+  packages: ["yaml"],
   timeout: 30,
   handler: async (ctx, { name }) => {
     const os = await import("node:os");
@@ -83,6 +84,10 @@ dynamic `import(...)`, `require(...)`, `ctx.fs`, and `ctx.exec(...)`. The
 handler is serialized and executed in Daytona, so keep it self-contained: do
 not close over app variables or imported helpers. Pass data through `args`,
 `env`, `functions`, staged `files`, or a reused sandbox instead.
+
+Packages are explicit. Pass `packages: ["octokit"]` for the common npm path, or
+`install: { manager: "pnpm", packages: ["octokit"] }` /
+`install: { command: "npm ci" }` when you want control.
 
 ## Calling Back Into Convex
 
@@ -170,12 +175,12 @@ const result = await daytona.runCommand(ctx, {
         content: "console.log('ok')",
       },
     ],
-    seedDownloadUrl: undefined,
   },
-  stream: {
+  install: { packages: ["typescript"] },
+  output: {
     // Pass a normal Convex function reference. The client turns it into a
     // function handle for the component.
-    onChunk: internal.events.commandChunk,
+    onOutput: internal.events.commandOutput,
   },
   capture: {
     path: "coverage",
@@ -199,7 +204,7 @@ result.artifact; // when capture is set
 result.callbackSecret; // when callback.secret is "mint"
 ```
 
-The streaming mutation receives:
+The output mutation receives:
 
 ```ts
 {
@@ -211,6 +216,9 @@ The streaming mutation receives:
   timestamp: number,
 }
 ```
+
+`stream.onChunk` is still accepted as a compatibility alias for
+`output.onOutput`.
 
 The artifact mutation receives:
 
@@ -227,6 +235,45 @@ The artifact mutation receives:
 `seedDownloadUrl` is treated as a `tar.gz` archive and extracted before files
 are staged. `capture.uploadUrl` is a consumer-provided upload URL; generate it
 from your app when you want the archive in your own storage namespace.
+
+## Durable Jobs
+
+Use `startCommand` when a command should keep running after the calling action
+returns. The component stores status and accumulated output in its own table.
+
+```ts
+export const startTests = action({
+  args: {},
+  handler: async (ctx) => {
+    return await daytona.startCommand(ctx, {
+      command: "npm test",
+      sandbox: { create: { image: "node:22" } },
+      files,
+      install: { command: "npm ci" },
+      output: { onOutput: internal.events.commandOutput },
+      capture: { path: "coverage", uploadUrl },
+    });
+  },
+});
+
+export const testStatus = query({
+  args: { jobId: v.string() },
+  handler: async (ctx, { jobId }) => {
+    return await daytona.getJob(ctx, { jobId });
+  },
+});
+
+export const cancelTests = mutation({
+  args: { jobId: v.string() },
+  handler: async (ctx, { jobId }) => {
+    await daytona.cancelJob(ctx, { jobId });
+  },
+});
+```
+
+Canceling a queued job prevents it from starting. Canceling a running job marks
+it canceled and preserves that state; use a short Daytona timeout or delete the
+sandbox from your app if you need hard process termination.
 
 You can still use the small forms:
 

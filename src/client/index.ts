@@ -63,7 +63,7 @@ export type DaytonaStagedFile = {
   path: string;
 };
 
-export type DaytonaCommandChunk = {
+export type DaytonaCommandOutput = {
   content: string;
   runId: string;
   sandboxId: string;
@@ -72,12 +72,21 @@ export type DaytonaCommandChunk = {
   timestamp: number;
 };
 
+/** @deprecated Use DaytonaCommandOutput. */
+export type DaytonaCommandChunk = DaytonaCommandOutput;
+
 export type DaytonaCommandArtifact = {
   contentType: string;
   path: string;
   size: number;
   storageId?: string;
   uploadUrl?: string;
+};
+
+export type DaytonaPackageInstall = {
+  command?: string;
+  manager?: "npm" | "pnpm" | "yarn";
+  packages?: string[];
 };
 
 export type DaytonaCommandSandbox = {
@@ -88,12 +97,22 @@ export type DaytonaCommandSandbox = {
   seedDownloadUrl?: string;
 };
 
-export type DaytonaCommandStream = {
+export type DaytonaCommandOutputOptions = {
   lineBuffered?: boolean;
+  onOutput?: FunctionReference<
+    "mutation",
+    FunctionVisibility,
+    DaytonaCommandOutput,
+    unknown
+  >;
+};
+
+export type DaytonaCommandStream = DaytonaCommandOutputOptions & {
+  /** @deprecated Use onOutput. */
   onChunk?: FunctionReference<
     "mutation",
     FunctionVisibility,
-    DaytonaCommandChunk,
+    DaytonaCommandOutput,
     unknown
   >;
 };
@@ -126,6 +145,8 @@ export type RunCommandOptions = {
   deleteTimeout?: number;
   env?: Record<string, string>;
   files?: DaytonaStagedFile[];
+  install?: DaytonaPackageInstall;
+  output?: DaytonaCommandOutputOptions;
   sandbox?: DaytonaCommandSandbox;
   sandboxId?: string;
   seedDownloadUrl?: string;
@@ -159,6 +180,28 @@ export type DaytonaRunnerOptions = {
   deleteSandboxAfter?: boolean;
 };
 
+export type DaytonaJobStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "canceled";
+
+export type DaytonaJob = {
+  artifact?: DaytonaCommandArtifact;
+  completedAt?: number;
+  createdAt: number;
+  durationMs?: number;
+  error?: string;
+  exitCode?: number;
+  jobId: string;
+  output: string;
+  sandboxId?: string;
+  startedAt?: number;
+  status: DaytonaJobStatus;
+  updatedAt: number;
+};
+
 type DaytonaCallableType = "query" | "mutation" | "action";
 
 type DaytonaCallableReference<Type extends DaytonaCallableType> =
@@ -180,6 +223,8 @@ export type DaytonaActionRuntimeOptions = {
   deleteTimeout?: number;
   env?: Record<string, string>;
   functions?: DaytonaActionFunctions;
+  install?: DaytonaPackageInstall;
+  packages?: string[];
   sandboxId?: string;
   timeout?: number;
 };
@@ -245,6 +290,8 @@ export type DaytonaActionDefinition<
 };
 
 type ActionCtx = Pick<GenericActionCtx<GenericDataModel>, "runAction">;
+type QueryCtx = Pick<GenericActionCtx<GenericDataModel>, "runQuery">;
+type MutationCtx = Pick<GenericActionCtx<GenericDataModel>, "runMutation">;
 
 const DAYTONA_ACTION_RESULT_MARKER = "__CONVEX_DAYTONA_ACTION_RESULT__:";
 
@@ -261,6 +308,7 @@ export class DaytonaRunner {
       create?: CreateSandboxOptions;
       createTimeout?: number;
       files?: DaytonaStagedFile[];
+      install?: DaytonaPackageInstall;
       seedDownloadUrl?: string;
     } = {},
   ) {
@@ -269,6 +317,7 @@ export class DaytonaRunner {
       create: mergeCreate(this.options.defaultCreate, args.create),
       createTimeout: args.createTimeout,
       files: args.files,
+      install: args.install,
       seedDownloadUrl: args.seedDownloadUrl,
     });
   }
@@ -300,6 +349,24 @@ export class DaytonaRunner {
       ...commandArgs,
       auth: this.auth(args.auth),
     });
+  }
+
+  async startCommand(ctx: ActionCtx, args: RunCommandOptions) {
+    const commandArgs = await this.commandArgs(args);
+    return await ctx.runAction(this.component.lib.startCommand, {
+      ...commandArgs,
+      auth: this.auth(args.auth),
+    });
+  }
+
+  async getJob(ctx: QueryCtx, args: { jobId: string }) {
+    return (await ctx.runQuery(this.component.lib.getJob, args as any)) as
+      | DaytonaJob
+      | null;
+  }
+
+  async cancelJob(ctx: MutationCtx, args: { jobId: string }) {
+    return await ctx.runMutation(this.component.lib.cancelJob, args as any);
   }
 
   async runCode(ctx: ActionCtx, args: RunCodeOptions) {
@@ -415,6 +482,7 @@ export class DaytonaRunner {
               ),
             },
           ],
+          install: normalizeInstall(definition),
           sandboxId: definition.sandboxId,
           seedDownloadUrl: definition.seedDownloadUrl,
           stream: definition.stream,
@@ -450,9 +518,21 @@ export class DaytonaRunner {
         : {
             lineBuffered: args.stream.lineBuffered,
             onChunk:
-              args.stream.onChunk === undefined
+              (args.stream.onChunk ?? args.stream.onOutput) === undefined
                 ? undefined
-                : await createFunctionHandle(args.stream.onChunk),
+                : await createFunctionHandle(
+                    (args.stream.onChunk ?? args.stream.onOutput)!,
+                  ),
+          };
+    const output =
+      args.output === undefined
+        ? undefined
+        : {
+            lineBuffered: args.output.lineBuffered,
+            onOutput:
+              args.output.onOutput === undefined
+                ? undefined
+                : await createFunctionHandle(args.output.onOutput),
           };
     return {
       ...args,
@@ -467,6 +547,7 @@ export class DaytonaRunner {
               ...args.sandbox,
               create: mergeCreate(this.options.defaultCreate, args.sandbox.create),
             },
+      output,
       stream,
     };
   }
@@ -702,6 +783,16 @@ function parseDaytonaActionResult(output: string, exitCode: number) {
   }
 
   return payload.value ?? null;
+}
+
+function normalizeInstall(args: DaytonaActionRuntimeOptions) {
+  if (!args.packages?.length) {
+    return args.install;
+  }
+  return {
+    ...args.install,
+    packages: [...(args.install?.packages ?? []), ...args.packages],
+  };
 }
 
 function shellQuote(value: string) {

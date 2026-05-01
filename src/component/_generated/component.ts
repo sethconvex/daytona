@@ -58,6 +58,12 @@ type DaytonaStagedFile = {
   path: string;
 };
 
+type DaytonaPackageInstall = {
+  command?: string;
+  manager?: "npm" | "pnpm" | "yarn";
+  packages?: string[];
+};
+
 type DaytonaCommandSandbox = {
   create?: CreateSandboxOptions;
   deleteAfter?: boolean;
@@ -69,6 +75,11 @@ type DaytonaCommandSandbox = {
 type DaytonaCommandStream = {
   lineBuffered?: boolean;
   onChunk?: string;
+};
+
+type DaytonaCommandOutput = {
+  lineBuffered?: boolean;
+  onOutput?: string;
 };
 
 type DaytonaCommandCapture = {
@@ -126,6 +137,21 @@ type RunResult = {
   sandbox: SandboxSummary;
 };
 
+type DaytonaJob = {
+  artifact?: DaytonaArtifact;
+  completedAt?: number;
+  createdAt: number;
+  durationMs?: number;
+  error?: string;
+  exitCode?: number;
+  jobId: string;
+  output: string;
+  sandboxId?: string;
+  startedAt?: number;
+  status: "queued" | "running" | "succeeded" | "failed" | "canceled";
+  updatedAt: number;
+};
+
 /**
  * A utility for referencing a Convex component's exposed API.
  */
@@ -140,6 +166,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           create?: CreateSandboxOptions;
           createTimeout?: number;
           files?: DaytonaStagedFile[];
+          install?: DaytonaPackageInstall;
           seedDownloadUrl?: string;
         },
         SandboxSummary,
@@ -181,6 +208,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           deleteTimeout?: number;
           env?: Record<string, string>;
           files?: DaytonaStagedFile[];
+          install?: DaytonaPackageInstall;
+          output?: DaytonaCommandOutput;
           sandbox?: DaytonaCommandSandbox;
           sandboxId?: string;
           seedDownloadUrl?: string;
@@ -188,6 +217,46 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           timeout?: number;
         },
         RunResult,
+        Name
+      >;
+      startCommand: FunctionReference<
+        "action",
+        "internal",
+        {
+          auth: DaytonaAuth;
+          callback?: DaytonaCommandCallback;
+          capture?: DaytonaCommandCapture;
+          command: string;
+          create?: CreateSandboxOptions;
+          createTimeout?: number;
+          cwd?: string;
+          deleteSandboxAfter?: boolean;
+          deleteTimeout?: number;
+          env?: Record<string, string>;
+          files?: DaytonaStagedFile[];
+          install?: DaytonaPackageInstall;
+          output?: DaytonaCommandOutput;
+          sandbox?: DaytonaCommandSandbox;
+          sandboxId?: string;
+          seedDownloadUrl?: string;
+          stream?: DaytonaCommandStream;
+          timeout?: number;
+        },
+        { jobId: string },
+        Name
+      >;
+      getJob: FunctionReference<
+        "query",
+        "internal",
+        { jobId: string },
+        DaytonaJob | null,
+        Name
+      >;
+      cancelJob: FunctionReference<
+        "mutation",
+        "internal",
+        { jobId: string; now?: number },
+        null,
         Name
       >;
       runCode: FunctionReference<
