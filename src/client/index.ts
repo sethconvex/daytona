@@ -56,8 +56,68 @@ export type CreateSandboxOptions = {
   volumes?: VolumeMount[];
 };
 
+export type DaytonaStagedFile = {
+  content: string;
+  encoding?: "utf8" | "base64";
+  mode?: string;
+  path: string;
+};
+
+export type DaytonaCommandChunk = {
+  content: string;
+  runId: string;
+  sandboxId: string;
+  sequence: number;
+  stream: "stdout" | "stderr";
+  timestamp: number;
+};
+
+export type DaytonaCommandArtifact = {
+  contentType: string;
+  path: string;
+  size: number;
+  storageId?: string;
+  uploadUrl?: string;
+};
+
+export type DaytonaCommandSandbox = {
+  create?: CreateSandboxOptions;
+  deleteAfter?: boolean;
+  files?: DaytonaStagedFile[];
+  id?: string;
+  seedDownloadUrl?: string;
+};
+
+export type DaytonaCommandStream = {
+  lineBuffered?: boolean;
+  onChunk?: FunctionReference<
+    "mutation",
+    FunctionVisibility,
+    DaytonaCommandChunk,
+    unknown
+  >;
+};
+
+export type DaytonaCommandCapture = {
+  onArtifact?: FunctionReference<
+    "mutation",
+    FunctionVisibility,
+    DaytonaCommandArtifact,
+    unknown
+  >;
+  path: string;
+  uploadUrl?: string;
+};
+
+export type DaytonaCommandCallback = {
+  envName?: string;
+  secret?: "mint" | string;
+};
+
 export type RunCommandOptions = {
   auth?: DaytonaAuth;
+  callback?: DaytonaCommandCallback;
+  capture?: DaytonaCommandCapture;
   command: string;
   create?: CreateSandboxOptions;
   createTimeout?: number;
@@ -65,7 +125,11 @@ export type RunCommandOptions = {
   deleteSandboxAfter?: boolean;
   deleteTimeout?: number;
   env?: Record<string, string>;
+  files?: DaytonaStagedFile[];
+  sandbox?: DaytonaCommandSandbox;
   sandboxId?: string;
+  seedDownloadUrl?: string;
+  stream?: DaytonaCommandStream;
   timeout?: number;
 };
 
@@ -175,12 +239,16 @@ export class DaytonaRunner {
       auth?: DaytonaAuth;
       create?: CreateSandboxOptions;
       createTimeout?: number;
+      files?: DaytonaStagedFile[];
+      seedDownloadUrl?: string;
     } = {},
   ) {
     return await ctx.runAction(this.component.lib.createSandbox, {
       auth: this.auth(args.auth),
       create: mergeCreate(this.options.defaultCreate, args.create),
       createTimeout: args.createTimeout,
+      files: args.files,
+      seedDownloadUrl: args.seedDownloadUrl,
     });
   }
 
@@ -206,12 +274,10 @@ export class DaytonaRunner {
   }
 
   async runCommand(ctx: ActionCtx, args: RunCommandOptions) {
+    const commandArgs = await this.commandArgs(args);
     return await ctx.runAction(this.component.lib.runCommand, {
-      ...args,
+      ...commandArgs,
       auth: this.auth(args.auth),
-      create: mergeCreate(this.options.defaultCreate, args.create),
-      deleteSandboxAfter:
-        args.deleteSandboxAfter ?? this.options.deleteSandboxAfter,
     });
   }
 
@@ -302,6 +368,45 @@ export class DaytonaRunner {
       ArgsArrayToObject<OneOrZeroArgs>,
       Awaited<ReturnValue>
     >;
+  }
+
+  private async commandArgs(args: RunCommandOptions) {
+    const capture =
+      args.capture === undefined
+        ? undefined
+        : {
+            onArtifact:
+              args.capture.onArtifact === undefined
+                ? undefined
+                : await createFunctionHandle(args.capture.onArtifact),
+            path: args.capture.path,
+            uploadUrl: args.capture.uploadUrl,
+          };
+    const stream =
+      args.stream === undefined
+        ? undefined
+        : {
+            lineBuffered: args.stream.lineBuffered,
+            onChunk:
+              args.stream.onChunk === undefined
+                ? undefined
+                : await createFunctionHandle(args.stream.onChunk),
+          };
+    return {
+      ...args,
+      create: mergeCreate(this.options.defaultCreate, args.create),
+      capture,
+      deleteSandboxAfter:
+        args.deleteSandboxAfter ?? this.options.deleteSandboxAfter,
+      sandbox:
+        args.sandbox === undefined
+          ? undefined
+          : {
+              ...args.sandbox,
+              create: mergeCreate(this.options.defaultCreate, args.sandbox.create),
+            },
+      stream,
+    };
   }
 
   private auth(overrides?: DaytonaAuth) {

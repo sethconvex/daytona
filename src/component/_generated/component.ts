@@ -51,6 +51,37 @@ type CreateSandboxOptions = {
   volumes?: VolumeMount[];
 };
 
+type DaytonaStagedFile = {
+  content: string;
+  encoding?: "utf8" | "base64";
+  mode?: string;
+  path: string;
+};
+
+type DaytonaCommandSandbox = {
+  create?: CreateSandboxOptions;
+  deleteAfter?: boolean;
+  files?: DaytonaStagedFile[];
+  id?: string;
+  seedDownloadUrl?: string;
+};
+
+type DaytonaCommandStream = {
+  lineBuffered?: boolean;
+  onChunk?: string;
+};
+
+type DaytonaCommandCapture = {
+  onArtifact?: string;
+  path: string;
+  uploadUrl?: string;
+};
+
+type DaytonaCommandCallback = {
+  envName?: string;
+  secret?: "mint" | string;
+};
+
 type SandboxSummary = {
   autoArchiveInterval?: number;
   autoDeleteInterval?: number;
@@ -74,11 +105,23 @@ type ExecuteResult = {
   };
   exitCode: number;
   result: string;
+  stderr?: string;
+};
+
+type DaytonaArtifact = {
+  contentType: string;
+  path: string;
+  size: number;
+  storageId?: string;
+  uploadUrl?: string;
 };
 
 type RunResult = {
+  artifact?: DaytonaArtifact;
+  callbackSecret?: string;
   createdSandbox: boolean;
   deletedSandbox: boolean;
+  durationMs: number;
   result: ExecuteResult;
   sandbox: SandboxSummary;
 };
@@ -96,6 +139,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           auth: DaytonaAuth;
           create?: CreateSandboxOptions;
           createTimeout?: number;
+          files?: DaytonaStagedFile[];
+          seedDownloadUrl?: string;
         },
         SandboxSummary,
         Name
@@ -126,6 +171,8 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         {
           auth: DaytonaAuth;
+          callback?: DaytonaCommandCallback;
+          capture?: DaytonaCommandCapture;
           command: string;
           create?: CreateSandboxOptions;
           createTimeout?: number;
@@ -133,7 +180,11 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           deleteSandboxAfter?: boolean;
           deleteTimeout?: number;
           env?: Record<string, string>;
+          files?: DaytonaStagedFile[];
+          sandbox?: DaytonaCommandSandbox;
           sandboxId?: string;
+          seedDownloadUrl?: string;
+          stream?: DaytonaCommandStream;
           timeout?: number;
         },
         RunResult,

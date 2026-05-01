@@ -7,6 +7,8 @@ import {
   type DaytonaConfig,
 } from "@daytona/sdk";
 import { v, type Infer } from "convex/values";
+import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { action } from "./_generated/server.js";
 
 const recordOfStrings = v.record(v.string(), v.string());
@@ -29,6 +31,13 @@ const resourcesValidator = v.object({
 const volumeMountValidator = v.object({
   volumeId: v.string(),
   mountPath: v.string(),
+});
+
+const stagedFileValidator = v.object({
+  content: v.string(),
+  encoding: v.optional(v.union(v.literal("utf8"), v.literal("base64"))),
+  mode: v.optional(v.string()),
+  path: v.string(),
 });
 
 const createSandboxValidator = v.object({
@@ -56,6 +65,14 @@ const createSandboxValidator = v.object({
   volumes: v.optional(v.array(volumeMountValidator)),
 });
 
+const commandSandboxValidator = v.object({
+  create: v.optional(createSandboxValidator),
+  deleteAfter: v.optional(v.boolean()),
+  files: v.optional(v.array(stagedFileValidator)),
+  id: v.optional(v.string()),
+  seedDownloadUrl: v.optional(v.string()),
+});
+
 const sandboxSummaryValidator = v.object({
   autoArchiveInterval: v.optional(v.number()),
   autoDeleteInterval: v.optional(v.number()),
@@ -81,17 +98,50 @@ const executeResultValidator = v.object({
   ),
   exitCode: v.number(),
   result: v.string(),
+  stderr: v.optional(v.string()),
+});
+
+const streamValidator = v.object({
+  lineBuffered: v.optional(v.boolean()),
+  onChunk: v.optional(v.string()),
+});
+
+const captureValidator = v.object({
+  onArtifact: v.optional(v.string()),
+  path: v.string(),
+  uploadUrl: v.optional(v.string()),
+});
+
+const callbackValidator = v.object({
+  envName: v.optional(v.string()),
+  secret: v.optional(v.union(v.literal("mint"), v.string())),
+});
+
+const artifactValidator = v.object({
+  contentType: v.string(),
+  path: v.string(),
+  size: v.number(),
+  storageId: v.optional(v.string()),
+  uploadUrl: v.optional(v.string()),
 });
 
 const runResultValidator = v.object({
+  artifact: v.optional(artifactValidator),
+  callbackSecret: v.optional(v.string()),
   createdSandbox: v.boolean(),
   deletedSandbox: v.boolean(),
+  durationMs: v.number(),
   result: executeResultValidator,
   sandbox: sandboxSummaryValidator,
 });
 
 type DaytonaAuth = Infer<typeof authValidator>;
 type CreateSandboxArgs = Infer<typeof createSandboxValidator>;
+type StagedFile = Infer<typeof stagedFileValidator>;
+type CaptureArgs = Infer<typeof captureValidator>;
+type StreamArgs = Infer<typeof streamValidator>;
+type CallbackArgs = Infer<typeof callbackValidator>;
+type CommandSandboxArgs = Infer<typeof commandSandboxValidator>;
 
 type SandboxLike = {
   autoArchiveInterval?: number;
@@ -109,11 +159,75 @@ type SandboxLike = {
   updatedAt?: string;
 };
 
+type SandboxRuntime = SandboxLike & {
+  fs: {
+    setFilePermissions: (
+      path: string,
+      permissions: { mode?: string },
+    ) => Promise<void>;
+    uploadFiles: (
+      files: Array<{ source: Buffer; destination: string }>,
+      timeout?: number,
+    ) => Promise<void>;
+    downloadFile: (remotePath: string, timeout?: number) => Promise<Buffer>;
+  };
+  process: {
+    createSession: (sessionId: string) => Promise<void>;
+    deleteSession: (sessionId: string) => Promise<void>;
+    executeCommand: (
+      command: string,
+      cwd?: string,
+      env?: Record<string, string>,
+      timeout?: number,
+    ) => Promise<{
+      artifacts?: { charts?: unknown[]; stdout: string };
+      exitCode: number;
+      result: string;
+    }>;
+    executeSessionCommand: (
+      sessionId: string,
+      request: {
+        command: string;
+        runAsync?: boolean;
+        suppressInputEcho?: boolean;
+      },
+      timeout?: number,
+    ) => Promise<{ cmdId?: string; exitCode?: number; stdout?: string; stderr?: string }>;
+    getSessionCommand: (
+      sessionId: string,
+      commandId: string,
+    ) => Promise<{ exitCode?: number }>;
+    getSessionCommandLogs: (
+      sessionId: string,
+      commandId: string,
+      onStdout: (chunk: string) => void,
+      onStderr: (chunk: string) => void,
+    ) => Promise<void>;
+  };
+};
+
+type CommandSpec = {
+  callback?: CallbackArgs;
+  capture?: CaptureArgs;
+  command: string;
+  create?: CreateSandboxArgs;
+  cwd?: string;
+  deleteAfter?: boolean;
+  env?: Record<string, string>;
+  files?: StagedFile[];
+  sandboxId?: string;
+  seedDownloadUrl?: string;
+  stream?: StreamArgs;
+  timeout?: number;
+};
+
 export const createSandbox = action({
   args: {
     auth: authValidator,
     create: v.optional(createSandboxValidator),
     createTimeout: v.optional(v.number()),
+    files: v.optional(v.array(stagedFileValidator)),
+    seedDownloadUrl: v.optional(v.string()),
   },
   returns: sandboxSummaryValidator,
   handler: async (_ctx, args) => {
@@ -123,6 +237,10 @@ export const createSandbox = action({
       args.create,
       args.createTimeout,
     );
+    await stageSandbox(sandbox, {
+      files: args.files,
+      seedDownloadUrl: args.seedDownloadUrl,
+    });
     return summarizeSandbox(sandbox);
   },
 });
@@ -158,6 +276,8 @@ export const getSandbox = action({
 export const runCommand = action({
   args: {
     auth: authValidator,
+    callback: v.optional(callbackValidator),
+    capture: v.optional(captureValidator),
     command: v.string(),
     create: v.optional(createSandboxValidator),
     createTimeout: v.optional(v.number()),
@@ -165,39 +285,68 @@ export const runCommand = action({
     deleteSandboxAfter: v.optional(v.boolean()),
     deleteTimeout: v.optional(v.number()),
     env: v.optional(recordOfStrings),
+    files: v.optional(v.array(stagedFileValidator)),
+    sandbox: v.optional(commandSandboxValidator),
     sandboxId: v.optional(v.string()),
+    seedDownloadUrl: v.optional(v.string()),
+    stream: v.optional(streamValidator),
     timeout: v.optional(v.number()),
   },
   returns: runResultValidator,
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
+    const spec = normalizeCommandSpec(args);
     const daytona = makeDaytona(args.auth);
     const { sandbox, createdSandbox } = await resolveSandbox(daytona, {
-      create: args.create,
+      create: spec.create,
       createTimeout: args.createTimeout,
-      sandboxId: args.sandboxId,
+      sandboxId: spec.sandboxId,
     });
-    const shouldDeleteSandbox = args.deleteSandboxAfter ?? createdSandbox;
+    const shouldDeleteSandbox = spec.deleteAfter ?? createdSandbox;
+    const callbackSecret = resolveCallbackSecret(spec.callback);
+    const env = addCallbackSecret(spec.env, spec.callback, callbackSecret);
+    const start = Date.now();
     let result;
+    let artifact;
     let deletedSandbox = false;
     try {
-      result = await sandbox.process.executeCommand(
-        args.command,
-        args.cwd,
-        args.env,
-        args.timeout,
-      );
+      await stageSandbox(sandbox, {
+        cwd: spec.cwd,
+        files: spec.files,
+        seedDownloadUrl: spec.seedDownloadUrl,
+      });
+      result = spec.stream?.onChunk
+        ? await executeStreamingCommand(ctx, sandbox, {
+            command: spec.command,
+            cwd: spec.cwd,
+            env,
+            stream: spec.stream,
+            timeout: spec.timeout,
+          })
+        : await sandbox.process.executeCommand(
+            spec.command,
+            spec.cwd,
+            env,
+            spec.timeout,
+          );
+      artifact =
+        spec.capture === undefined
+          ? undefined
+          : await captureArtifact(ctx, sandbox, spec.capture);
     } finally {
       if (shouldDeleteSandbox) {
         await daytona.delete(sandbox, args.deleteTimeout);
         deletedSandbox = true;
       }
     }
-    return {
+    return stripUndefined({
+      artifact,
+      callbackSecret,
       createdSandbox,
       deletedSandbox,
+      durationMs: Date.now() - start,
       result: normalizeExecuteResult(result),
       sandbox: summarizeSandbox(sandbox),
-    };
+    });
   },
 });
 
@@ -237,6 +386,7 @@ export const runCode = action({
       sandboxId: args.sandboxId,
     });
     const shouldDeleteSandbox = args.deleteSandboxAfter ?? createdSandbox;
+    const start = Date.now();
     let result;
     let deletedSandbox = false;
     try {
@@ -254,11 +404,323 @@ export const runCode = action({
     return {
       createdSandbox,
       deletedSandbox,
+      durationMs: Date.now() - start,
       result: normalizeExecuteResult(result),
       sandbox: summarizeSandbox(sandbox),
     };
   },
 });
+
+function normalizeCommandSpec(args: {
+  callback?: CallbackArgs;
+  capture?: CaptureArgs;
+  command: string;
+  create?: CreateSandboxArgs;
+  cwd?: string;
+  deleteSandboxAfter?: boolean;
+  env?: Record<string, string>;
+  files?: StagedFile[];
+  sandbox?: CommandSandboxArgs;
+  sandboxId?: string;
+  seedDownloadUrl?: string;
+  stream?: StreamArgs;
+  timeout?: number;
+}): CommandSpec {
+  return {
+    callback: args.callback,
+    capture: args.capture,
+    command: args.command,
+    create: args.sandbox?.create ?? args.create,
+    cwd: args.cwd,
+    deleteAfter: args.sandbox?.deleteAfter ?? args.deleteSandboxAfter,
+    env: args.env,
+    files: args.sandbox?.files ?? args.files,
+    sandboxId: args.sandbox?.id ?? args.sandboxId,
+    seedDownloadUrl: args.sandbox?.seedDownloadUrl ?? args.seedDownloadUrl,
+    stream: args.stream,
+    timeout: args.timeout,
+  };
+}
+
+async function stageSandbox(
+  sandbox: SandboxRuntime,
+  args: {
+    cwd?: string;
+    files?: StagedFile[];
+    seedDownloadUrl?: string;
+  },
+) {
+  if (args.seedDownloadUrl) {
+    await seedSandbox(sandbox, args.seedDownloadUrl, args.cwd);
+  }
+  if (args.files?.length) {
+    await uploadStagedFiles(sandbox, args.files, args.cwd);
+  }
+}
+
+async function seedSandbox(
+  sandbox: SandboxRuntime,
+  seedDownloadUrl: string,
+  cwd?: string,
+) {
+  const destination = cwd ?? ".";
+  const result = await sandbox.process.executeCommand(
+    [
+      `mkdir -p ${shellQuote(destination)}`,
+      `curl -fsSL "$DAYTONA_SEED_DOWNLOAD_URL" | tar -xzf - -C ${shellQuote(destination)}`,
+    ].join(" && "),
+    undefined,
+    { DAYTONA_SEED_DOWNLOAD_URL: seedDownloadUrl },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to seed Daytona sandbox: ${result.result || "unknown error"}`,
+    );
+  }
+}
+
+async function uploadStagedFiles(
+  sandbox: SandboxRuntime,
+  files: StagedFile[],
+  cwd?: string,
+) {
+  await sandbox.fs.uploadFiles(
+    files.map((file) => ({
+      destination: resolveSandboxPath(file.path, cwd),
+      source: Buffer.from(file.content, file.encoding ?? "utf8"),
+    })),
+  );
+  await Promise.all(
+    files
+      .filter((file) => file.mode !== undefined)
+      .map((file) =>
+        sandbox.fs.setFilePermissions(resolveSandboxPath(file.path, cwd), {
+          mode: file.mode,
+        }),
+      ),
+  );
+}
+
+async function executeStreamingCommand(
+  ctx: { runMutation: (handle: any, args: any) => Promise<unknown> },
+  sandbox: SandboxRuntime,
+  args: {
+    command: string;
+    cwd?: string;
+    env?: Record<string, string>;
+    stream: StreamArgs;
+    timeout?: number;
+  },
+) {
+  const runId = randomUUID();
+  const sessionId = `daytona-${runId}`;
+  const emitter = createStreamEmitter(ctx, {
+    lineBuffered: args.stream.lineBuffered ?? true,
+    onChunk: args.stream.onChunk,
+    runId,
+    sandboxId: sandbox.id,
+  });
+  await sandbox.process.createSession(sessionId);
+  try {
+    const started = await sandbox.process.executeSessionCommand(
+      sessionId,
+      {
+        command: buildSessionCommand(args.command, args.cwd, args.env),
+        runAsync: true,
+        suppressInputEcho: true,
+      },
+      args.timeout,
+    );
+    const commandId = started.cmdId;
+    if (!commandId) {
+      throw new Error("Daytona did not return a command id for the session.");
+    }
+    await sandbox.process.getSessionCommandLogs(
+      sessionId,
+      commandId,
+      (chunk) => emitter.push("stdout", chunk),
+      (chunk) => emitter.push("stderr", chunk),
+    );
+    await emitter.flush();
+    const command = await waitForSessionCommandExit(
+      sandbox,
+      sessionId,
+      commandId,
+      args.timeout,
+    );
+    return {
+      artifacts: { stdout: emitter.stdout },
+      exitCode: command.exitCode ?? started.exitCode ?? 0,
+      result: emitter.stdout,
+      stderr: emitter.stderr,
+    };
+  } finally {
+    await emitter.flush();
+    await sandbox.process.deleteSession(sessionId).catch(() => undefined);
+  }
+}
+
+async function waitForSessionCommandExit(
+  sandbox: SandboxRuntime,
+  sessionId: string,
+  commandId: string,
+  timeout?: number,
+) {
+  const deadline = timeout === undefined ? undefined : Date.now() + timeout * 1000;
+  while (true) {
+    const command = await sandbox.process.getSessionCommand(sessionId, commandId);
+    if (command.exitCode !== undefined) {
+      return command;
+    }
+    if (deadline !== undefined && Date.now() > deadline) {
+      throw new Error(`Daytona command ${commandId} timed out.`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+function createStreamEmitter(
+  ctx: { runMutation: (handle: any, args: any) => Promise<unknown> },
+  args: {
+    lineBuffered: boolean;
+    onChunk?: string;
+    runId: string;
+    sandboxId: string;
+  },
+) {
+  let sequence = 0;
+  let pending = Promise.resolve();
+  const buffers = { stderr: "", stdout: "" };
+  const output = { stderr: "", stdout: "" };
+
+  const emit = (stream: "stderr" | "stdout", content: string) => {
+    if (!args.onChunk || content.length === 0) {
+      return;
+    }
+    const payload = {
+      content,
+      runId: args.runId,
+      sandboxId: args.sandboxId,
+      sequence,
+      stream,
+      timestamp: Date.now(),
+    };
+    sequence += 1;
+    pending = pending.then(() =>
+      ctx.runMutation(args.onChunk as any, payload).then(() => undefined),
+    );
+  };
+
+  return {
+    get stderr() {
+      return output.stderr;
+    },
+    get stdout() {
+      return output.stdout;
+    },
+    flush: async () => {
+      emit("stdout", buffers.stdout);
+      emit("stderr", buffers.stderr);
+      buffers.stdout = "";
+      buffers.stderr = "";
+      await pending;
+    },
+    push: (stream: "stderr" | "stdout", chunk: string) => {
+      output[stream] += chunk;
+      if (!args.lineBuffered) {
+        emit(stream, chunk);
+        return;
+      }
+      buffers[stream] += chunk;
+      const lines = buffers[stream].split(/\r?\n/);
+      buffers[stream] = lines.pop() ?? "";
+      for (const line of lines) {
+        emit(stream, `${line}\n`);
+      }
+    },
+  };
+}
+
+async function captureArtifact(
+  ctx: { runMutation: (handle: any, args: any) => Promise<unknown> },
+  sandbox: SandboxRuntime,
+  capture: CaptureArgs,
+) {
+  const archivePath = `/tmp/daytona-capture-${randomUUID()}.tar.gz`;
+  const source = capture.path;
+  const parent = path.posix.dirname(source);
+  const base = path.posix.basename(source);
+  const archiveCommand = [
+    `rm -f ${shellQuote(archivePath)}`,
+    `tar -czf ${shellQuote(archivePath)} -C ${shellQuote(parent)} ${shellQuote(base)}`,
+  ].join(" && ");
+  const archiveResult = await sandbox.process.executeCommand(archiveCommand);
+  if (archiveResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to archive ${source}: ${archiveResult.result || "unknown error"}`,
+    );
+  }
+  const buffer = await sandbox.fs.downloadFile(archivePath);
+  let storageId;
+  if (capture.uploadUrl) {
+    const response = await fetch(capture.uploadUrl, {
+      body: buffer as unknown as BodyInit,
+      headers: { "content-type": "application/gzip" },
+      method: "PUT",
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to upload Daytona artifact: HTTP ${response.status}`,
+      );
+    }
+    storageId = await parseStorageId(response);
+  }
+  const artifact = stripUndefined({
+    contentType: "application/gzip",
+    path: source,
+    size: buffer.byteLength,
+    storageId,
+    uploadUrl: capture.uploadUrl,
+  });
+  if (capture.onArtifact) {
+    await ctx.runMutation(capture.onArtifact as any, artifact);
+  }
+  return artifact;
+}
+
+async function parseStorageId(response: Response) {
+  const text = await response.text();
+  if (!text) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(text) as { storageId?: unknown };
+    return typeof parsed.storageId === "string" ? parsed.storageId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveCallbackSecret(callback?: CallbackArgs) {
+  if (callback?.secret === "mint") {
+    return randomUUID();
+  }
+  return callback?.secret;
+}
+
+function addCallbackSecret(
+  env: Record<string, string> | undefined,
+  callback: CallbackArgs | undefined,
+  secret: string | undefined,
+) {
+  if (!secret) {
+    return env;
+  }
+  return {
+    ...env,
+    [callback?.envName ?? "DAYTONA_CALLBACK_SECRET"]: secret,
+  };
+}
 
 function makeDaytona(auth: DaytonaAuth) {
   if (!auth.apiKey && !(auth.jwtToken && auth.organizationId)) {
@@ -352,6 +814,7 @@ function normalizeExecuteResult(result: {
   artifacts?: { charts?: unknown[]; stdout: string };
   exitCode: number;
   result: string;
+  stderr?: string;
 }) {
   return stripUndefined({
     artifacts:
@@ -363,7 +826,42 @@ function normalizeExecuteResult(result: {
           }),
     exitCode: result.exitCode,
     result: result.result,
+    stderr: result.stderr,
   });
+}
+
+function buildSessionCommand(
+  command: string,
+  cwd?: string,
+  env?: Record<string, string>,
+) {
+  const parts = [];
+  if (cwd) {
+    parts.push(`cd ${shellQuote(cwd)}`);
+  }
+  for (const [key, value] of Object.entries(env ?? {})) {
+    assertValidEnvName(key);
+    parts.push(`export ${key}=${shellQuote(value)}`);
+  }
+  parts.push(command);
+  return parts.join(" && ");
+}
+
+function resolveSandboxPath(filePath: string, cwd?: string) {
+  if (path.posix.isAbsolute(filePath) || !cwd) {
+    return filePath;
+  }
+  return path.posix.join(cwd, filePath);
+}
+
+function assertValidEnvName(name: string) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(`Invalid environment variable name: ${name}`);
+  }
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function stripUndefined<T extends Record<string, unknown>>(value: T) {

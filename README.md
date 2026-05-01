@@ -142,23 +142,92 @@ export const enrichUser = daytona.action({
 });
 ```
 
-Lower-level APIs are available when you want explicit control from a normal
-Convex action.
+## Commands
 
-Run a shell command:
+Use `runCommand` when you want a command-shaped primitive. It accepts one
+spec with sandbox input, streaming, capture, and callback auth in predictable
+places:
 
 ```ts
-await daytona.runCommand(ctx, {
-  command: "python --version && uname -a",
+const result = await daytona.runCommand(ctx, {
+  command: "npm test",
   timeout: 30,
+  sandbox: {
+    create: { image: "node:22", autoStopInterval: 30 },
+    files: [
+      {
+        path: "package.json",
+        content: JSON.stringify({ scripts: { test: "node test.js" } }),
+      },
+      {
+        path: "test.js",
+        content: "console.log('ok')",
+      },
+    ],
+    seedDownloadUrl: undefined,
+  },
+  stream: {
+    // Pass a normal Convex function reference. The client turns it into a
+    // function handle for the component.
+    onChunk: internal.events.commandChunk,
+  },
+  capture: {
+    path: "coverage",
+    uploadUrl,
+    onArtifact: internal.events.artifactReady,
+  },
+  callback: {
+    secret: "mint",
+  },
 });
 ```
 
-Reuse a sandbox:
+The command result includes:
+
+```ts
+result.durationMs;
+result.result.exitCode;
+result.result.result; // stdout
+result.result.stderr;
+result.artifact; // when capture is set
+result.callbackSecret; // when callback.secret is "mint"
+```
+
+The streaming mutation receives:
+
+```ts
+{
+  runId: string,
+  sandboxId: string,
+  sequence: number,
+  stream: "stdout" | "stderr",
+  content: string,
+  timestamp: number,
+}
+```
+
+The artifact mutation receives:
+
+```ts
+{
+  path: string,
+  contentType: "application/gzip",
+  size: number,
+  uploadUrl?: string,
+  storageId?: string,
+}
+```
+
+`seedDownloadUrl` is treated as a `tar.gz` archive and extracted before files
+are staged. `capture.uploadUrl` is a consumer-provided upload URL; generate it
+from your app when you want the archive in your own storage namespace.
+
+You can still use the small forms:
 
 ```ts
 const sandbox = await daytona.createSandbox(ctx, {
   create: { language: "python", autoStopInterval: 30 },
+  files: [{ path: "hello.py", content: "print('hi')" }],
 });
 
 await daytona.runCode(ctx, {

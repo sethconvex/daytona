@@ -33,7 +33,15 @@ export const runShell = action({
   args: {},
   handler: async (ctx) => {
     return await daytona.runCommand(ctx, {
-      command: "uname -a && pwd",
+      command: "node hello.js && uname -a",
+      sandbox: {
+        files: [
+          {
+            path: "hello.js",
+            content: "console.log('hello from a staged file')",
+          },
+        ],
+      },
       timeout: 30,
     });
   },
