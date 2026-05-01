@@ -184,7 +184,22 @@ export type DaytonaActionRuntimeOptions = {
   timeout?: number;
 };
 
+export type DaytonaExecResult = {
+  exitCode: number;
+  stderr: string;
+  stdout: string;
+};
+
 export type DaytonaActionContext = {
+  exec: (
+    command: string,
+    options?: {
+      cwd?: string;
+      env?: Record<string, string>;
+      timeoutMs?: number;
+    },
+  ) => Promise<DaytonaExecResult>;
+  fs: typeof import("node:fs/promises");
   runAction: <Return = unknown>(
     name: string,
     args?: Record<string, unknown>,
@@ -214,11 +229,17 @@ export type DaytonaActionDefinition<
     | void,
   ReturnValue,
   OneOrZeroArgs extends ArgsArrayForOptionalValidator<ArgsValidator>,
-> = DaytonaActionRuntimeOptions & {
-  args?: ArgsValidator;
-  returns?: ReturnsValidator;
-  handler: (
-    ctx: DaytonaActionContext,
+  > = DaytonaActionRuntimeOptions & {
+    args?: ArgsValidator;
+    capture?: DaytonaCommandCapture;
+    cwd?: string;
+    files?: DaytonaStagedFile[];
+    sandbox?: Omit<CreateSandboxOptions, "language">;
+    seedDownloadUrl?: string;
+    stream?: DaytonaCommandStream;
+    returns?: ReturnsValidator;
+    handler: (
+      ctx: DaytonaActionContext,
     ...args: OneOrZeroArgs
   ) => ReturnValue | Promise<ReturnValue>;
 };
@@ -330,32 +351,73 @@ export class DaytonaRunner {
     ArgsArrayToObject<OneOrZeroArgs>,
     Awaited<ReturnValue>
   > {
+    return this.defineAction(definition);
+  }
+
+  /**
+   * Define a Convex action whose handler runs in a Node.js process inside a
+   * Daytona sandbox.
+   */
+  defineAction<
+    ArgsValidator extends
+      | PropertyValidators
+      | Validator<any, "required", any>
+      | void,
+    ReturnsValidator extends
+      | PropertyValidators
+      | Validator<any, "required", any>
+      | void,
+    ReturnValue extends ReturnValueForOptionalValidator<ReturnsValidator> = any,
+    OneOrZeroArgs extends
+      ArgsArrayForOptionalValidator<ArgsValidator> = DefaultArgsForOptionalValidator<ArgsValidator>,
+  >(
+    definition: DaytonaActionDefinition<
+      ArgsValidator,
+      ReturnsValidator,
+      ReturnValue,
+      OneOrZeroArgs
+    >,
+  ): RegisteredAction<
+    "public",
+    ArgsArrayToObject<OneOrZeroArgs>,
+    Awaited<ReturnValue>
+  > {
     return actionGeneric({
       args: definition.args as any,
       returns: definition.returns as any,
       handler: async (ctx, actionArgs: unknown = {}) => {
         const callback = await this.callback(definition);
-        const result = await this.runCode(ctx, {
+        const scriptPath = ".convex-daytona/action.cjs";
+        const result = await this.runCommand(ctx, {
           auth: definition.auth,
-          argv: [],
-          code: buildDaytonaActionCode(
-            definition.handler as (
-              ctx: DaytonaActionContext,
-              ...args: any[]
-            ) => unknown,
-            actionArgs,
-            callback,
-          ),
-          create: {
+          capture: definition.capture,
+          command: `node ${shellQuote(scriptPath)}`,
+          create: mergeCreate(definition.sandbox, {
             ...definition.create,
             language: "javascript",
-          },
+          }),
           createTimeout: definition.createTimeout,
+          cwd: definition.cwd,
           deleteSandboxAfter: definition.deleteSandboxAfter,
           deleteTimeout: definition.deleteTimeout,
           env: definition.env,
-          language: "javascript",
+          files: [
+            ...(definition.files ?? []),
+            {
+              path: scriptPath,
+              content: buildDaytonaActionCode(
+                definition.handler as (
+                  ctx: DaytonaActionContext,
+                  ...args: any[]
+                ) => unknown,
+                actionArgs,
+                callback,
+              ),
+            },
+          ],
           sandboxId: definition.sandboxId,
+          seedDownloadUrl: definition.seedDownloadUrl,
+          stream: definition.stream,
           timeout: definition.timeout,
         });
         return parseDaytonaActionResult(
@@ -532,11 +594,38 @@ function buildDaytonaActionCode(
   };
 
   try {
+    const fs = await import("node:fs/promises");
+    const { exec: execCallback } = await import("node:child_process");
     const { createRequire } = await import("node:module");
+    const { promisify } = await import("node:util");
+    const execAsync = promisify(execCallback);
     const require = createRequire(process.cwd() + "/daytona-action.js");
     const __dirname = process.cwd();
     const __filename = __dirname + "/daytona-action.js";
+    const __exec = async (command, options = {}) => {
+      const execOptions = {
+        cwd: options.cwd,
+        env: { ...process.env, ...(options.env ?? {}) },
+        timeout: options.timeoutMs,
+      };
+      try {
+        const result = await execAsync(command, execOptions);
+        return {
+          exitCode: 0,
+          stderr: result.stderr,
+          stdout: result.stdout,
+        };
+      } catch (error) {
+        return {
+          exitCode: typeof error?.code === "number" ? error.code : 1,
+          stderr: String(error?.stderr ?? error?.message ?? ""),
+          stdout: String(error?.stdout ?? ""),
+        };
+      }
+    };
     const __ctx = {
+      exec: __exec,
+      fs,
       runAction: (name, args) => __callConvex("action", name, args),
       runMutation: (name, args) => __callConvex("mutation", name, args),
       runQuery: (name, args) => __callConvex("query", name, args),
@@ -613,6 +702,10 @@ function parseDaytonaActionResult(output: string, exitCode: number) {
   }
 
   return payload.value ?? null;
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 async function createFunctionHandleMaps(functions?: DaytonaActionFunctions) {

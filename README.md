@@ -39,8 +39,9 @@ You can also use `DAYTONA_JWT_TOKEN` with `DAYTONA_ORGANIZATION_ID`, plus option
 
 ## Usage
 
-The easiest API is `daytona.action`. You define a regular Convex action, but
-the handler function runs as JavaScript in a Daytona sandbox.
+The easiest API is `daytona.defineAction`. You define a regular Convex action,
+but the handler function runs as JavaScript in a Node process inside a Daytona
+sandbox.
 
 ```ts
 import { DaytonaRunner } from "@convex-dev/daytona";
@@ -55,28 +56,33 @@ const daytona = new DaytonaRunner(components.daytona, {
   },
 });
 
-export const runInDaytona = daytona.action({
+export const analyzeRepo = daytona.defineAction({
   args: { name: v.string() },
   returns: v.object({
     greeting: v.string(),
     node: v.string(),
+    files: v.array(v.string()),
   }),
+  sandbox: { image: "node:22" },
   timeout: 30,
-  handler: async (_ctx, { name }) => {
+  handler: async (ctx, { name }) => {
     const os = await import("node:os");
+    await ctx.fs.writeFile("hello.txt", `hello ${name}`);
+    const listing = await ctx.exec("ls -1");
     return {
       greeting: `hello ${name} from Daytona`,
       node: `${process.version} on ${os.platform()}`,
+      files: listing.stdout.trim().split("\n"),
     };
   },
 });
 ```
 
-Inside a `daytona.action` handler you can use Node globals, `fetch`, dynamic
-`import(...)`, or `require(...)`. The handler is serialized and executed in
-Daytona, so keep it self-contained: do not close over app variables or imported
-helpers. Pass data through `args`, `env`, `functions`, or a reused sandbox
-instead.
+Inside a `daytona.defineAction` handler you can use Node globals, `fetch`,
+dynamic `import(...)`, `require(...)`, `ctx.fs`, and `ctx.exec(...)`. The
+handler is serialized and executed in Daytona, so keep it self-contained: do
+not close over app variables or imported helpers. Pass data through `args`,
+`env`, `functions`, staged `files`, or a reused sandbox instead.
 
 ## Calling Back Into Convex
 
@@ -119,7 +125,7 @@ import { components, internal } from "./_generated/api.js";
 
 const daytona = new DaytonaRunner(components.daytona);
 
-export const enrichUser = daytona.action({
+export const enrichUser = daytona.defineAction({
   args: { userId: v.id("users") },
   returns: v.null(),
   functions: {

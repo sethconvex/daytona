@@ -11,20 +11,23 @@ const daytona = new DaytonaRunner(components.daytona, {
   },
 });
 
-export const greet = daytona.action({
+export const greet = daytona.defineAction({
   args: {
     name: v.string(),
   },
   returns: v.object({
     greeting: v.string(),
     node: v.string(),
+    pwd: v.string(),
   }),
   timeout: 30,
-  handler: async (_ctx, { name }) => {
+  handler: async (ctx, { name }) => {
     const os = await import("node:os");
+    const pwd = await ctx.exec("pwd");
     return {
       greeting: `hello ${name} from Daytona`,
       node: `${process.version} on ${os.platform()}`,
+      pwd: pwd.stdout.trim(),
     };
   },
 });
