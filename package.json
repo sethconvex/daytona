@@ -49,9 +49,6 @@
       "default": "./dist/component/convex.config.js"
     }
   },
-  "dependencies": {
-    "@daytona/sdk": "^0.171.0"
-  },
   "peerDependencies": {
     "convex": "^1.37.0"
   },

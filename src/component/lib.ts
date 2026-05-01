@@ -1,15 +1,5 @@
-"use node";
-
-import {
-  Daytona,
-  type CreateSandboxFromImageParams,
-  type CreateSandboxFromSnapshotParams,
-  type DaytonaConfig,
-} from "@daytona/sdk";
 import { anyApi } from "convex/server";
 import { v, type Infer } from "convex/values";
-import { randomUUID } from "node:crypto";
-import path from "node:path";
 import {
   action,
   internalAction,
@@ -173,24 +163,23 @@ type SandboxLike = {
   snapshot?: string;
   state?: string;
   target?: string;
+  toolboxProxyUrl?: string;
   updatedAt?: string;
 };
 
 type SandboxRuntime = SandboxLike & {
-  fs: {
-    setFilePermissions: (
-      path: string,
-      permissions: { mode?: string },
-    ) => Promise<void>;
-    uploadFiles: (
-      files: Array<{ source: Buffer; destination: string }>,
-      timeout?: number,
-    ) => Promise<void>;
-    downloadFile: (remotePath: string, timeout?: number) => Promise<Buffer>;
-  };
   process: {
     createSession: (sessionId: string) => Promise<void>;
     deleteSession: (sessionId: string) => Promise<void>;
+    codeRun: (
+      code: string,
+      params?: { argv?: string[]; env?: Record<string, string> },
+      timeout?: number,
+    ) => Promise<{
+      artifacts?: { charts?: unknown[]; stdout: string };
+      exitCode: number;
+      result: string;
+    }>;
     executeCommand: (
       command: string,
       cwd?: string,
@@ -783,21 +772,32 @@ async function uploadStagedFiles(
   files: StagedFile[],
   cwd?: string,
 ) {
-  await sandbox.fs.uploadFiles(
-    files.map((file) => ({
-      destination: resolveSandboxPath(file.path, cwd),
-      source: Buffer.from(file.content, file.encoding ?? "utf8"),
-    })),
-  );
-  await Promise.all(
-    files
-      .filter((file) => file.mode !== undefined)
-      .map((file) =>
-        sandbox.fs.setFilePermissions(resolveSandboxPath(file.path, cwd), {
-          mode: file.mode,
-        }),
-      ),
-  );
+  for (const file of files) {
+    const destination = resolveSandboxPath(file.path, cwd);
+    const parent = posixDirname(destination);
+    const env: Record<string, string> =
+      file.encoding === "base64"
+        ? { DAYTONA_FILE_BASE64: file.content }
+        : { DAYTONA_FILE_CONTENT: file.content };
+    const writeCommand =
+      file.encoding === "base64"
+        ? `printf '%s' "$DAYTONA_FILE_BASE64" | base64 -d > ${shellQuote(destination)}`
+        : `printf '%s' "$DAYTONA_FILE_CONTENT" > ${shellQuote(destination)}`;
+    const commands = [`mkdir -p ${shellQuote(parent)}`, writeCommand];
+    if (file.mode !== undefined) {
+      commands.push(`chmod ${shellQuote(file.mode)} ${shellQuote(destination)}`);
+    }
+    const result = await sandbox.process.executeCommand(
+      commands.join(" && "),
+      undefined,
+      env,
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Failed to stage ${destination}: ${result.result || "unknown error"}`,
+      );
+    }
+  }
 }
 
 async function installPackages(
@@ -847,7 +847,7 @@ async function executeStreamingCommand(
     timeout?: number;
   },
 ) {
-  const runId = randomUUID();
+  const runId = crypto.randomUUID();
   const sessionId = `daytona-${runId}`;
   const emitter = createStreamEmitter(ctx, {
     jobId: args.jobId,
@@ -992,10 +992,10 @@ async function captureArtifact(
   sandbox: SandboxRuntime,
   capture: CaptureArgs,
 ) {
-  const archivePath = `/tmp/daytona-capture-${randomUUID()}.tar.gz`;
+  const archivePath = `/tmp/daytona-capture-${crypto.randomUUID()}.tar.gz`;
   const source = capture.path;
-  const parent = path.posix.dirname(source);
-  const base = path.posix.basename(source);
+  const parent = posixDirname(source);
+  const base = posixBasename(source);
   const archiveCommand = [
     `rm -f ${shellQuote(archivePath)}`,
     `tar -czf ${shellQuote(archivePath)} -C ${shellQuote(parent)} ${shellQuote(base)}`,
@@ -1006,25 +1006,35 @@ async function captureArtifact(
       `Failed to archive ${source}: ${archiveResult.result || "unknown error"}`,
     );
   }
-  const buffer = await sandbox.fs.downloadFile(archivePath);
+  let size = 0;
   let storageId;
   if (capture.uploadUrl) {
-    const response = await fetch(capture.uploadUrl, {
-      body: buffer as unknown as BodyInit,
-      headers: { "content-type": "application/gzip" },
-      method: "PUT",
-    });
-    if (!response.ok) {
+    const uploadResult = await sandbox.process.executeCommand(
+      [
+        `size=$(wc -c < ${shellQuote(archivePath)})`,
+        `curl -fsS -X PUT -H 'content-type: application/gzip' --data-binary @${shellQuote(archivePath)} "$DAYTONA_ARTIFACT_UPLOAD_URL"`,
+        `printf '\\nDAYTONA_ARTIFACT_SIZE=%s\\n' "$size"`,
+      ].join(" && "),
+      undefined,
+      { DAYTONA_ARTIFACT_UPLOAD_URL: capture.uploadUrl },
+    );
+    if (uploadResult.exitCode !== 0) {
       throw new Error(
-        `Failed to upload Daytona artifact: HTTP ${response.status}`,
+        `Failed to upload Daytona artifact: ${uploadResult.result || "unknown error"}`,
       );
     }
-    storageId = await parseStorageId(response);
+    size = parseArtifactSize(uploadResult.result);
+    storageId = parseStorageIdFromText(uploadResult.result);
+  } else {
+    const sizeResult = await sandbox.process.executeCommand(
+      `wc -c < ${shellQuote(archivePath)}`,
+    );
+    size = Number.parseInt(sizeResult.result.trim(), 10);
   }
   const artifact = stripUndefined({
     contentType: "application/gzip",
     path: source,
-    size: buffer.byteLength,
+    size: Number.isFinite(size) ? size : 0,
     storageId,
     uploadUrl: capture.uploadUrl,
   });
@@ -1034,10 +1044,13 @@ async function captureArtifact(
   return artifact;
 }
 
-async function parseStorageId(response: Response) {
-  const text = await response.text();
+function parseStorageIdFromText(text: string) {
   if (!text) {
     return undefined;
+  }
+  const match = text.match(/"storageId"\s*:\s*"([^"]+)"/);
+  if (match) {
+    return match[1];
   }
   try {
     const parsed = JSON.parse(text) as { storageId?: unknown };
@@ -1047,9 +1060,14 @@ async function parseStorageId(response: Response) {
   }
 }
 
+function parseArtifactSize(output: string) {
+  const match = output.match(/DAYTONA_ARTIFACT_SIZE=(\d+)/);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
 function resolveCallbackSecret(callback?: CallbackArgs) {
   if (callback?.secret === "mint") {
-    return randomUUID();
+    return crypto.randomUUID();
   }
   return callback?.secret;
 }
@@ -1074,11 +1092,11 @@ function makeDaytona(auth: DaytonaAuth) {
       "Provide DAYTONA_API_KEY or both DAYTONA_JWT_TOKEN and DAYTONA_ORGANIZATION_ID.",
     );
   }
-  return new Daytona(stripUndefined(auth) as DaytonaConfig);
+  return new DaytonaHttpClient(auth);
 }
 
 async function resolveSandbox(
-  daytona: Daytona,
+  daytona: DaytonaHttpClient,
   args: {
     create?: CreateSandboxArgs;
     createTimeout?: number;
@@ -1098,7 +1116,7 @@ async function resolveSandbox(
 }
 
 async function createNewSandbox(
-  daytona: Daytona,
+  daytona: DaytonaHttpClient,
   create: CreateSandboxArgs = {},
   createTimeout?: number,
 ) {
@@ -1110,32 +1128,24 @@ async function createNewSandbox(
 }
 
 function toDaytonaCreateParams(create: CreateSandboxArgs) {
-  const common = stripUndefined({
+  return stripUndefined({
     autoArchiveInterval: create.autoArchiveInterval,
     autoDeleteInterval: create.autoDeleteInterval,
     autoStopInterval: create.autoStopInterval,
     envVars: create.envVars,
     ephemeral: create.ephemeral,
+    image: create.image,
     labels: create.labels,
     language: create.language,
     name: create.name,
     networkAllowList: create.networkAllowList,
     networkBlockAll: create.networkBlockAll,
     public: create.public,
+    resources: create.resources,
+    snapshot: create.snapshot,
     user: create.user,
     volumes: create.volumes,
   });
-  if (create.image !== undefined) {
-    return stripUndefined({
-      ...common,
-      image: create.image,
-      resources: create.resources,
-    }) as CreateSandboxFromImageParams;
-  }
-  return stripUndefined({
-    ...common,
-    snapshot: create.snapshot,
-  }) as CreateSandboxFromSnapshotParams;
 }
 
 function summarizeSandbox(sandbox: SandboxLike) {
@@ -1176,6 +1186,263 @@ function normalizeExecuteResult(result: {
   });
 }
 
+class DaytonaHttpClient {
+  private readonly apiUrl: string;
+  private readonly auth: DaytonaAuth;
+
+  constructor(auth: DaytonaAuth) {
+    this.auth = auth;
+    this.apiUrl = (auth.apiUrl ?? "https://app.daytona.io/api").replace(
+      /\/$/,
+      "",
+    );
+  }
+
+  async create(
+    params: ReturnType<typeof toDaytonaCreateParams>,
+    options: { timeout?: number } = {},
+  ) {
+    const sandbox = await this.apiRequest<SandboxLike>("/sandbox", {
+      body: this.createSandboxPayload(params),
+      method: "POST",
+    });
+    return await this.wrapSandbox(
+      await this.waitUntilStarted(sandbox, options.timeout ?? 60),
+    );
+  }
+
+  async delete(sandbox: SandboxLike, _timeout?: number) {
+    await this.apiRequest(`/sandbox/${encodeURIComponent(sandbox.id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async get(sandboxId: string) {
+    const sandbox = await this.apiRequest<SandboxLike>(
+      `/sandbox/${encodeURIComponent(sandboxId)}`,
+    );
+    return await this.wrapSandbox(sandbox);
+  }
+
+  private createSandboxPayload(params: ReturnType<typeof toDaytonaCreateParams>) {
+    const labels = {
+      ...params.labels,
+      "code-toolbox-language": params.language ?? "python",
+    };
+    return stripUndefined({
+      autoArchiveInterval: params.autoArchiveInterval,
+      autoDeleteInterval:
+        params.ephemeral === true ? 0 : params.autoDeleteInterval,
+      autoStopInterval: params.autoStopInterval,
+      buildInfo:
+        params.image === undefined
+          ? undefined
+          : { dockerfileContent: `FROM ${params.image}\n` },
+      cpu: params.resources?.cpu,
+      disk: params.resources?.disk,
+      env: params.envVars ?? {},
+      gpu: params.resources?.gpu,
+      labels,
+      memory: params.resources?.memory,
+      name: params.name,
+      networkAllowList: params.networkAllowList,
+      networkBlockAll: params.networkBlockAll,
+      public: params.public,
+      snapshot: params.snapshot,
+      target: this.auth.target,
+      user: params.user,
+      volumes: params.volumes,
+    });
+  }
+
+  private async waitUntilStarted(sandbox: SandboxLike, timeoutSeconds: number) {
+    const deadline = Date.now() + timeoutSeconds * 1000;
+    let current = sandbox;
+    while (current.state !== "started") {
+      if (current.state === "error" || current.state === "build_failed") {
+        throw new Error(`Daytona sandbox ${current.id} entered ${current.state}.`);
+      }
+      if (Date.now() > deadline) {
+        throw new Error(
+          `Daytona sandbox ${current.id} did not start within ${timeoutSeconds} seconds.`,
+        );
+      }
+      await sleep(1000);
+      current = await this.apiRequest<SandboxLike>(
+        `/sandbox/${encodeURIComponent(current.id)}`,
+      );
+    }
+    return current;
+  }
+
+  private async wrapSandbox(sandbox: SandboxLike): Promise<SandboxRuntime> {
+    const toolboxBase = await this.toolboxBaseUrl(sandbox);
+    const toolboxRequest = async <T>(
+      path: string,
+      init: { body?: unknown; method?: string } = {},
+    ) => {
+      return await this.request<T>(`${toolboxBase}${path}`, init);
+    };
+    return {
+      ...sandbox,
+      process: {
+        codeRun: async (code, params, timeout) => {
+          const response = await toolboxRequest<{
+            artifacts?: { charts?: unknown[] };
+            code?: number;
+            exitCode?: number;
+            result?: string;
+          }>("/process/code-run", {
+            body: stripUndefined({
+              argv: params?.argv,
+              code,
+              envs: params?.env,
+              language: sandbox.labels?.["code-toolbox-language"] ?? "javascript",
+              timeout,
+            }),
+            method: "POST",
+          });
+          const result = response.result ?? "";
+          return {
+            artifacts: { charts: response.artifacts?.charts, stdout: result },
+            exitCode: response.exitCode ?? response.code ?? 0,
+            result,
+          };
+        },
+        createSession: async (sessionId) => {
+          await toolboxRequest("/process/session", {
+            body: { sessionId },
+            method: "POST",
+          });
+        },
+        deleteSession: async (sessionId) => {
+          await toolboxRequest(
+            `/process/session/${encodeURIComponent(sessionId)}`,
+            { method: "DELETE" },
+          );
+        },
+        executeCommand: async (command, cwd, env, timeout) => {
+          const response = await toolboxRequest<{
+            artifacts?: { charts?: unknown[]; stdout?: string };
+            code?: number;
+            exitCode?: number;
+            result?: string;
+          }>("/process/execute", {
+            body: stripUndefined({
+              command,
+              cwd,
+              envs: env && Object.keys(env).length ? env : undefined,
+              timeout,
+            }),
+            method: "POST",
+          });
+          const result = response.result ?? "";
+          return {
+            artifacts: {
+              charts: response.artifacts?.charts,
+              stdout: response.artifacts?.stdout ?? result,
+            },
+            exitCode: response.exitCode ?? response.code ?? 0,
+            result,
+          };
+        },
+        executeSessionCommand: async (sessionId, request, timeout) => {
+          return await toolboxRequest<{
+            cmdId?: string;
+            exitCode?: number;
+            stderr?: string;
+            stdout?: string;
+          }>(`/process/session/${encodeURIComponent(sessionId)}/exec`, {
+            body: stripUndefined({ ...request, timeout }),
+            method: "POST",
+          });
+        },
+        getSessionCommand: async (sessionId, commandId) => {
+          return await toolboxRequest<{ exitCode?: number }>(
+            `/process/session/${encodeURIComponent(sessionId)}/command/${encodeURIComponent(commandId)}`,
+          );
+        },
+        getSessionCommandLogs: async (
+          sessionId,
+          commandId,
+          onStdout,
+          _onStderr,
+        ) => {
+          const logs = await this.textRequest(
+            `${toolboxBase}/process/session/${encodeURIComponent(sessionId)}/command/${encodeURIComponent(commandId)}/logs?follow=true`,
+          );
+          onStdout(logs);
+        },
+      },
+    };
+  }
+
+  private async toolboxBaseUrl(sandbox: SandboxLike) {
+    const proxyUrl =
+      sandbox.toolboxProxyUrl ??
+      (
+        await this.apiRequest<{ url?: string }>(
+          `/sandbox/${encodeURIComponent(sandbox.id)}/toolbox-proxy-url`,
+        )
+      ).url;
+    if (!proxyUrl) {
+      throw new Error(`Daytona did not return a toolbox proxy URL.`);
+    }
+    return `${proxyUrl.replace(/\/$/, "")}/${sandbox.id}`;
+  }
+
+  private async apiRequest<T>(
+    path: string,
+    init: { body?: unknown; method?: string } = {},
+  ) {
+    return await this.request<T>(`${this.apiUrl}${path}`, init);
+  }
+
+  private async request<T>(
+    url: string,
+    init: { body?: unknown; method?: string } = {},
+  ) {
+    const response = await fetch(url, {
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      headers: this.headers(init.body !== undefined),
+      method: init.method ?? "GET",
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(
+        `Daytona API request failed: HTTP ${response.status}${body ? ` ${body}` : ""}`,
+      );
+    }
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    return (await response.json()) as T;
+  }
+
+  private async textRequest(url: string) {
+    const response = await fetch(url, {
+      headers: this.headers(false, "text/plain"),
+      method: "GET",
+    });
+    if (!response.ok) {
+      throw new Error(`Daytona API request failed: HTTP ${response.status}`);
+    }
+    return await response.text();
+  }
+
+  private headers(json: boolean, accept = "application/json") {
+    return stripUndefined({
+      accept,
+      authorization: `Bearer ${this.auth.apiKey ?? this.auth.jwtToken}`,
+      "content-type": json ? "application/json" : undefined,
+      "x-daytona-organization-id": this.auth.apiKey
+        ? undefined
+        : this.auth.organizationId,
+      "x-daytona-source": "convex-component",
+    });
+  }
+}
+
 function buildSessionCommand(
   command: string,
   cwd?: string,
@@ -1194,10 +1461,28 @@ function buildSessionCommand(
 }
 
 function resolveSandboxPath(filePath: string, cwd?: string) {
-  if (path.posix.isAbsolute(filePath) || !cwd) {
+  if (filePath.startsWith("/") || !cwd) {
     return filePath;
   }
-  return path.posix.join(cwd, filePath);
+  return `${cwd.replace(/\/+$/, "")}/${filePath.replace(/^\/+/, "")}`;
+}
+
+function posixDirname(filePath: string) {
+  const normalized = filePath.replace(/\/+$/, "");
+  const slashIndex = normalized.lastIndexOf("/");
+  if (slashIndex < 0) {
+    return ".";
+  }
+  if (slashIndex === 0) {
+    return "/";
+  }
+  return normalized.slice(0, slashIndex);
+}
+
+function posixBasename(filePath: string) {
+  const normalized = filePath.replace(/\/+$/, "");
+  const slashIndex = normalized.lastIndexOf("/");
+  return slashIndex < 0 ? normalized : normalized.slice(slashIndex + 1);
 }
 
 function assertValidEnvName(name: string) {
@@ -1208,6 +1493,10 @@ function assertValidEnvName(name: string) {
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function stripUndefined<T extends Record<string, unknown>>(value: T) {

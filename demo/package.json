@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@convex-dev/daytona": "file:..",
+    "@daytona/sdk": "^0.171.0",
     "@vitejs/plugin-react": "^5.1.1",
     "convex": "^1.37.0",
     "lucide-react": "^0.468.0",

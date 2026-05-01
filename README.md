@@ -10,6 +10,8 @@ This component gives your app Convex actions a small Daytona runtime bridge:
 - keep Daytona credentials in your app environment instead of the component environment
 
 The Convex action still orchestrates the call, but the actual code or command runs inside Daytona.
+The component talks to Daytona over `fetch`, so it can run in the standard
+Convex component runtime without the Daytona Node SDK.
 
 ## Installation
 
@@ -43,7 +45,8 @@ Want to see the API shape in an app first? See the runnable demo in
 [`demo/`](./demo). It includes a Vite UI, a Convex backend, explicit npm
 package install, durable jobs, cancellation, DB context, and artifact records.
 The demo runs the Daytona SDK from `"use node"` app actions because Convex
-components cannot currently execute Node runtime code directly.
+components cannot currently execute Node runtime code directly; the packaged
+component itself does not depend on the SDK.
 
 The easiest API is `daytona.defineAction`. You define a regular Convex action,
 but the handler function runs as JavaScript in a Node process inside a Daytona
