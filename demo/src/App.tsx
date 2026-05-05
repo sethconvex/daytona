@@ -12,15 +12,25 @@ type AnalyzeResult = {
   wordCount: number;
 };
 
+type BundledResult = {
+  dbContext: string;
+  length: number;
+  node: string;
+  upper: string;
+};
+
 export function App() {
   const analyzeText = useAction(api.daytona.analyzeText);
+  const runBundledLength = useAction(api.bundled.getStringLength);
+  const seedBundledDemo = useAction(api.bundled.seedBundledDemo);
   const startDurableJob = useAction(api.daytona.startDurableJob);
   const cancelJob = useMutation(api.jobs.cancel);
   const [text, setText] = useState("measure this string in daytona");
   const [label, setLabel] = useState("demo build");
   const [jobId, setJobId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
-  const [busy, setBusy] = useState<"analysis" | "job" | null>(null);
+  const [bundled, setBundled] = useState<BundledResult | null>(null);
+  const [busy, setBusy] = useState<"analysis" | "bundled" | "job" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const job = useQuery(api.jobs.get, jobId ? { jobId: jobId as any } : "skip");
   const events = useQuery(api.events.recentOutputEvents);
@@ -43,6 +53,19 @@ export function App() {
     setError(null);
     try {
       setAnalysis(await analyzeText({ text }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runBundledDemo() {
+    setBusy("bundled");
+    setError(null);
+    try {
+      await seedBundledDemo({});
+      setBundled((await runBundledLength({ text })) as BundledResult);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -101,6 +124,26 @@ export function App() {
 
         <article className="panel">
           <div className="panelHeader">
+            <Boxes size={18} />
+            <h2>bundled TypeScript action</h2>
+          </div>
+          <CodeBlock code={bundledActionExample} />
+          <textarea
+            value={text}
+            onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
+              setText(event.target.value)
+            }
+            rows={5}
+          />
+          <button onClick={runBundledDemo} disabled={busy !== null}>
+            <Play size={16} />
+            Run bundled action
+          </button>
+          <BundledResultCard result={bundled} loading={busy === "bundled"} />
+        </article>
+
+        <article className="panel">
+          <div className="panelHeader">
             <Terminal size={18} />
             <h2>durable command job</h2>
           </div>
@@ -148,6 +191,43 @@ export function App() {
         </article>
       </section>
     </main>
+  );
+}
+
+function BundledResultCard({
+  result,
+  loading,
+}: {
+  result: BundledResult | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return <div className="result">Staging generated bundle in Daytona...</div>;
+  }
+  if (!result) {
+    return <div className="result muted">Run this to test the package component API.</div>;
+  }
+  return (
+    <div className="result">
+      <dl>
+        <div>
+          <dt>Node</dt>
+          <dd>{result.node}</dd>
+        </div>
+        <div>
+          <dt>Length</dt>
+          <dd>{result.length}</dd>
+        </div>
+        <div>
+          <dt>Upper</dt>
+          <dd>{result.upper}</dd>
+        </div>
+        <div>
+          <dt>DB Context</dt>
+          <dd>{result.dbContext}</dd>
+        </div>
+      </dl>
+    </div>
   );
 }
 
@@ -260,6 +340,38 @@ const defineActionExample = `export const analyzeText = daytona.defineAction({
       length: text.length,
       words: lodash.words(text).length,
     };
+  },
+});`;
+
+const bundledActionExample = `// convex/daytona/getStringLength.ts
+export default defineDaytonaHandler<{
+  args: { text: string };
+  queries: { getFact: FunctionReference<
+    "query",
+    "internal",
+    { key: string },
+    { value: string } | null
+  > };
+}>(async (ctx, { text }) => {
+  const fact = await ctx.queries.getFact({
+    key: "demoContext",
+  });
+  const node = await ctx.exec("node --version");
+
+  return {
+    dbContext: fact?.value ?? "No fact found.",
+    length: text.length,
+    node: node.stdout.trim(),
+    upper: text.toUpperCase(),
+  };
+});
+
+// convex/bundled.ts
+export const getStringLength = daytona.defineBundledAction({
+  bundle: bundles.getStringLength,
+  sandbox: { image: "node:22" },
+  functions: {
+    queries: { getFact: internal.facts.get },
   },
 });`;
 

@@ -8,7 +8,10 @@
  * @module
  */
 
+import type * as bundled from "../bundled.js";
 import type * as daytona from "../daytona.js";
+import type * as daytona_getStringLength from "../daytona/getStringLength.js";
+import type * as daytonaManifest from "../daytonaManifest.js";
 import type * as events from "../events.js";
 import type * as facts from "../facts.js";
 import type * as http from "../http.js";
@@ -21,7 +24,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  bundled: typeof bundled;
   daytona: typeof daytona;
+  "daytona/getStringLength": typeof daytona_getStringLength;
+  daytonaManifest: typeof daytonaManifest;
   events: typeof events;
   facts: typeof facts;
   http: typeof http;
@@ -54,4 +60,6 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {};
+export declare const components: {
+  daytona: import("@convex-dev/daytona/_generated/component.js").ComponentApi<"daytona">;
+};

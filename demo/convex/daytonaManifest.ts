@@ -1,0 +1,16 @@
+import type { DaytonaBundleManifest } from "@convex-dev/daytona/entry";
+
+export const bundles = {
+  getStringLength: {
+    name: "getStringLength",
+    entrypoint: ".convex-daytona/getStringLength.mjs",
+    files: [
+      {
+        path: ".convex-daytona/getStringLength.mjs",
+        content:
+          "function defineDaytonaHandler(handler) { return handler; }\nvar getStringLength_default = defineDaytonaHandler(async (ctx, { text }) => {\n  const fact = await ctx.queries.getFact({ key: \"demoContext\" });\n  const node = await ctx.exec(\"node --version\");\n  return {\n    dbContext: fact?.value ?? \"No fact found.\",\n    length: text.length,\n    node: node.stdout.trim(),\n    upper: text.toUpperCase()\n  };\n});\nexport {\n  getStringLength_default as default\n};\n",
+      },
+    ],
+    source: "convex/daytona/getStringLength.ts",
+  },
+} satisfies DaytonaBundleManifest;

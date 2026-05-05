@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "daytona:build": "node ../dist/cli/index.js build",
     "dev": "vite --host 127.0.0.1",
     "convex": "convex dev",
     "typecheck": "tsc --noEmit"
