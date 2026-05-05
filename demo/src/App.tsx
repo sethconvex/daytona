@@ -14,9 +14,11 @@ type AnalyzeResult = {
 
 type BundledResult = {
   filePreview: string;
+  firstWord: string;
   length: number;
   node: string;
   upper: string;
+  wordCount: number;
 };
 
 export function App() {
@@ -217,6 +219,14 @@ function BundledResultCard({
           <dd>{result.length}</dd>
         </div>
         <div>
+          <dt>Words</dt>
+          <dd>{result.wordCount}</dd>
+        </div>
+        <div>
+          <dt>First Word</dt>
+          <dd>{result.firstWord}</dd>
+        </div>
+        <div>
           <dt>Upper</dt>
           <dd>{result.upper}</dd>
         </div>
@@ -342,20 +352,38 @@ const defineActionExample = `export const analyzeText = daytona.defineAction({
 });`;
 
 const bundledActionExample = `// convex/daytona/getStringLength.ts
+import { summarizeString } from "../daytonaHelpers";
+
 export default defineDaytonaHandler<{
   args: { text: string };
 }>(async (ctx, { text }) => {
   await ctx.fs.writeFile("input.txt", text);
   const node = await ctx.exec("node --version");
   const filePreview = await ctx.fs.readFile("input.txt", "utf8");
+  const summary = summarizeString(filePreview);
 
   return {
     filePreview: filePreview.slice(0, 80),
-    length: text.length,
+    firstWord: summary.firstWord,
+    length: summary.length,
     node: node.stdout.trim(),
-    upper: text.toUpperCase(),
+    upper: summary.upper,
+    wordCount: summary.wordCount,
   };
 });
+
+// convex/daytonaHelpers.ts
+export function summarizeString(text: string) {
+  const words = text.trim() === ""
+    ? []
+    : text.trim().split(/\\s+/);
+  return {
+    firstWord: words[0] ?? "",
+    length: text.length,
+    upper: text.toUpperCase(),
+    wordCount: words.length,
+  };
+}
 
 // convex/bundled.ts
 export const getStringLength = daytona.defineBundledAction({

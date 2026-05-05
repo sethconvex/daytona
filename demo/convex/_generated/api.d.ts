@@ -11,6 +11,7 @@
 import type * as bundled from "../bundled.js";
 import type * as daytona from "../daytona.js";
 import type * as daytona_getStringLength from "../daytona/getStringLength.js";
+import type * as daytonaHelpers from "../daytonaHelpers.js";
 import type * as daytonaManifest from "../daytonaManifest.js";
 import type * as events from "../events.js";
 import type * as facts from "../facts.js";
@@ -27,6 +28,7 @@ declare const fullApi: ApiFromModules<{
   bundled: typeof bundled;
   daytona: typeof daytona;
   "daytona/getStringLength": typeof daytona_getStringLength;
+  daytonaHelpers: typeof daytonaHelpers;
   daytonaManifest: typeof daytonaManifest;
   events: typeof events;
   facts: typeof facts;
