@@ -2,6 +2,11 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  callbackSecrets: defineTable({
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    secret: v.string(),
+  }).index("by_secret", ["secret"]),
   jobs: defineTable({
     artifact: v.optional(
       v.object({

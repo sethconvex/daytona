@@ -252,6 +252,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         null,
         Name
       >;
+      registerCallbackSecret: FunctionReference<
+        "mutation",
+        "internal",
+        { expiresAt: number; secret: string },
+        null,
+        Name
+      >;
       runCode: FunctionReference<
         "action",
         "internal",

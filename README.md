@@ -26,7 +26,7 @@ import daytona from "@convex-dev/daytona/convex.config.js";
 import { defineApp } from "convex/server";
 
 const app = defineApp();
-app.use(daytona);
+app.use(daytona, { httpPrefix: "/daytona/" });
 
 export default app;
 ```
@@ -101,33 +101,14 @@ Packages are explicit. Pass `packages: ["octokit"]` for the common npm path, or
 ## Calling Back Into Convex
 
 To use `ctx.runQuery`, `ctx.runMutation`, or `ctx.runAction` from Daytona,
-mount the callback bridge once in `convex/http.ts`:
-
-```ts
-import { daytonaCallback } from "@convex-dev/daytona";
-import { httpRouter } from "convex/server";
-import { httpAction } from "./_generated/server.js";
-
-const http = httpRouter();
-
-http.route({
-  path: "/daytona/callback",
-  method: "POST",
-  handler: httpAction(daytonaCallback()),
-});
-
-export default http;
-```
-
-Set a shared secret:
-
-```sh
-npx convex env set DAYTONA_CALLBACK_SECRET your_random_secret
-```
+mount the component with an `httpPrefix` as shown above. The component owns a
+`POST /callback` route, exposed at `/daytona/callback` with that prefix.
 
 The action helper defaults the callback URL to
-`${CONVEX_SITE_URL}/daytona/callback`. You can also pass `callbackUrl` and
-`callbackSecret` to `new DaytonaRunner(...)`, or set `DAYTONA_CALLBACK_URL`.
+`${CONVEX_SITE_URL}/daytona/callback` and mints a per-run callback secret that
+the component validates before running any function handle. You can also pass
+`callbackUrl` and `callbackSecret` to `new DaytonaRunner(...)`, or set
+`DAYTONA_CALLBACK_URL`, if you want to use an app-owned route instead.
 
 Register the functions this Daytona action is allowed to call, then call them
 by name from the Daytona-side `ctx`:

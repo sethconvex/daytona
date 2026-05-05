@@ -5,6 +5,7 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
+  mutation,
 } from "./_generated/server.js";
 
 const internalApi = (anyApi as any).lib;
@@ -629,6 +630,48 @@ export const failJob = internalMutation({
       updatedAt: args.now,
     });
     return null;
+  },
+});
+
+export const registerCallbackSecret = mutation({
+  args: {
+    expiresAt: v.number(),
+    secret: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("callbackSecrets")
+      .withIndex("by_secret", (q) => q.eq("secret", args.secret))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        expiresAt: args.expiresAt,
+      });
+      return null;
+    }
+    await ctx.db.insert("callbackSecrets", {
+      createdAt: now,
+      expiresAt: args.expiresAt,
+      secret: args.secret,
+    });
+    return null;
+  },
+});
+
+export const validateCallbackSecret = internalQuery({
+  args: {
+    now: v.number(),
+    secret: v.string(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const secret = await ctx.db
+      .query("callbackSecrets")
+      .withIndex("by_secret", (q) => q.eq("secret", args.secret))
+      .unique();
+    return secret !== null && secret.expiresAt > args.now;
   },
 });
 

@@ -161,6 +161,7 @@ export type DaytonaActionOptions =
 export type DaytonaRunnerOptions = {
   auth?: DaytonaAuth;
   callbackSecret?: string;
+  callbackTtlMs?: number;
   callbackUrl?: string;
   defaultCreate?: CreateSandboxOptions;
   deleteSandboxAfter?: boolean;
@@ -202,6 +203,7 @@ export type DaytonaActionFunctions = {
 export type DaytonaActionRuntimeOptions = {
   auth?: DaytonaAuth;
   callbackSecret?: string;
+  callbackTtlMs?: number;
   callbackUrl?: string;
   create?: Omit<CreateSandboxOptions, "language">;
   createTimeout?: number;
@@ -276,6 +278,10 @@ export type DaytonaActionDefinition<
 };
 
 type ActionCtx = Pick<GenericActionCtx<GenericDataModel>, "runAction">;
+type CallbackActionCtx = Pick<
+  GenericActionCtx<GenericDataModel>,
+  "runAction" | "runMutation"
+>;
 type QueryCtx = Pick<GenericActionCtx<GenericDataModel>, "runQuery">;
 type MutationCtx = Pick<GenericActionCtx<GenericDataModel>, "runMutation">;
 
@@ -439,7 +445,7 @@ export class DaytonaRunner {
       args: definition.args as any,
       returns: definition.returns as any,
       handler: async (ctx, actionArgs: unknown = {}) => {
-        const callback = await this.callback(definition);
+        const callback = await this.callback(ctx, definition);
         const scriptPath = ".convex-daytona/action.cjs";
         const result = await this.runCommand(ctx, {
           auth: definition.auth,
@@ -557,26 +563,49 @@ export class DaytonaRunner {
     return auth;
   }
 
-  private async callback(args: DaytonaActionRuntimeOptions) {
+  private async callback(
+    ctx: CallbackActionCtx,
+    args: DaytonaActionRuntimeOptions,
+  ) {
     if (!hasFunctions(args.functions)) {
       return undefined;
     }
 
-    const callbackUrl =
+    const explicitCallbackUrl =
       args.callbackUrl ??
       this.options.callbackUrl ??
-      process.env.DAYTONA_CALLBACK_URL ??
-      defaultCallbackUrl();
+      process.env.DAYTONA_CALLBACK_URL;
+    const callbackUrl = explicitCallbackUrl ?? defaultCallbackUrl();
     const callbackSecret =
       args.callbackSecret ??
       this.options.callbackSecret ??
-      process.env.DAYTONA_CALLBACK_SECRET;
+      process.env.DAYTONA_CALLBACK_SECRET ??
+      crypto.randomUUID();
 
-    if (!callbackUrl || !callbackSecret) {
+    if (!callbackUrl) {
       throw new Error(
-        "To use ctx.runQuery/runMutation/runAction from a Daytona action, set DAYTONA_CALLBACK_URL and DAYTONA_CALLBACK_SECRET, or pass callbackUrl/callbackSecret to DaytonaRunner.",
+        "To use ctx.runQuery/runMutation/runAction from a Daytona action, mount @convex-dev/daytona with httpPrefix \"/daytona/\", set CONVEX_SITE_URL, or pass callbackUrl to DaytonaRunner.",
       );
     }
+    if (
+      explicitCallbackUrl !== undefined &&
+      args.callbackSecret === undefined &&
+      this.options.callbackSecret === undefined &&
+      process.env.DAYTONA_CALLBACK_SECRET === undefined
+    ) {
+      throw new Error(
+        "Pass callbackSecret or set DAYTONA_CALLBACK_SECRET when using a custom callbackUrl.",
+      );
+    }
+
+    await ctx.runMutation(this.component.lib.registerCallbackSecret, {
+      expiresAt:
+        Date.now() +
+        (args.callbackTtlMs ??
+          this.options.callbackTtlMs ??
+          24 * 60 * 60 * 1000),
+      secret: callbackSecret,
+    });
 
     return {
       functions: await createFunctionHandleMaps(args.functions),
