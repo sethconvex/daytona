@@ -1,15 +1,12 @@
 # Convex Daytona Demo
 
-This is a runnable demo app for the Daytona + Convex API shape.
-
-The demo uses `"use node"` Convex app actions to call the Daytona SDK directly.
-That is intentional for now: Convex components cannot currently run Node
-runtime code, so the production package should keep Daytona execution in app
-Node actions and use the component for durable state/callback coordination.
+This is the canonical runnable demo app for `@convex-dev/daytona`.
 
 It shows:
 
 - a `defineAction`-style flow running JavaScript in a Daytona Node sandbox
+- a bundled TypeScript action importing a helper from the app's `convex/`
+  directory and running that bundled code in Daytona
 - `packages: ["lodash"]` installing npm packages in Daytona
 - `ctx.runQuery`-style DB context fetched before the Daytona run
 - durable jobs with polling, output, and cancellation
@@ -40,7 +37,11 @@ npx convex env set DAYTONA_API_KEY your_daytona_key
 
 ## Important Files
 
-- `convex/daytona.ts`: the Daytona execution examples
+- `convex/daytona.ts`: SDK-backed demo actions for the interactive UI
+- `convex/bundled.ts`: the packaged component's bundled action API
+- `convex/daytona/getStringLength.ts`: Daytona TypeScript entry module
+- `convex/daytonaHelpers.ts`: app helper imported by the Daytona entry module
+- `convex/daytonaManifest.ts`: generated bundle manifest checked in for the demo
 - `convex/jobs.ts`: durable job state and cancellation
 - `convex/facts.ts`: Convex DB context used by the Daytona demo
 - `convex/events.ts`: artifact records
