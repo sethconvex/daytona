@@ -190,6 +190,36 @@ export type DaytonaJob = {
   updatedAt: number;
 };
 
+export type DaytonaJobPage = {
+  isDone: boolean;
+  jobs: DaytonaJob[];
+  nextCursor: string | null;
+};
+
+export type DaytonaCancelJobsResult = {
+  canceled: number;
+  isDone: boolean;
+  nextCursor: string | null;
+  processed: number;
+};
+
+export type DaytonaCleanupRun = {
+  batchSize: number;
+  cancelCursor?: string | null;
+  cancelOlderThan?: number;
+  canceled: number;
+  cleanupId: string;
+  completedAt?: number;
+  createdAt: number;
+  deleteCursor?: string | null;
+  deleteOlderThan?: number;
+  deleted: number;
+  error?: string;
+  processed: number;
+  status: "running" | "succeeded" | "failed";
+  updatedAt: number;
+};
+
 type DaytonaCallableType = "query" | "mutation" | "action";
 
 type DaytonaCallableReference<Type extends DaytonaCallableType> =
@@ -394,6 +424,66 @@ export class DaytonaRunner {
 
   async cancelJob(ctx: MutationCtx, args: { jobId: string }) {
     return await ctx.runMutation(this.component.lib.cancelJob, args as any);
+  }
+
+  async listJobs(
+    ctx: QueryCtx,
+    args: {
+      cursor?: string | null;
+      limit?: number;
+      status?: DaytonaJobStatus;
+    } = {},
+  ) {
+    return (await ctx.runQuery(this.component.lib.listJobs, args as any)) as
+      DaytonaJobPage;
+  }
+
+  async cancelJobs(
+    ctx: MutationCtx,
+    args: {
+      beforeUpdatedAt?: number;
+      cursor?: string | null;
+      limit?: number;
+      status?: DaytonaJobStatus;
+    } = {},
+  ) {
+    return (await ctx.runMutation(
+      this.component.lib.cancelJobs,
+      args as any,
+    )) as DaytonaCancelJobsResult;
+  }
+
+  async startCleanup(
+    ctx: MutationCtx,
+    args: {
+      batchSize?: number;
+      cancelActiveOlderThanMs?: number;
+      deleteCompletedOlderThanMs?: number;
+    },
+  ) {
+    return (await ctx.runMutation(
+      this.component.lib.startCleanup,
+      args as any,
+    )) as { cleanupId: string };
+  }
+
+  async cancelAllJobs(
+    ctx: MutationCtx,
+    args: {
+      batchSize?: number;
+      olderThanMs?: number;
+    } = {},
+  ) {
+    return await this.startCleanup(ctx, {
+      batchSize: args.batchSize,
+      cancelActiveOlderThanMs: args.olderThanMs ?? 0,
+    });
+  }
+
+  async getCleanup(ctx: QueryCtx, args: { cleanupId: string }) {
+    return (await ctx.runQuery(this.component.lib.getCleanup, args as any)) as
+      | DaytonaCleanupRun
+      | null;
   }
 
   async runCode(ctx: ActionCtx, args: RunCodeOptions) {

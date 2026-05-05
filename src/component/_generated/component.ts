@@ -147,6 +147,36 @@ type DaytonaJob = {
   updatedAt: number;
 };
 
+type DaytonaJobPage = {
+  isDone: boolean;
+  jobs: DaytonaJob[];
+  nextCursor: string | null;
+};
+
+type DaytonaCancelJobsResult = {
+  canceled: number;
+  isDone: boolean;
+  nextCursor: string | null;
+  processed: number;
+};
+
+type DaytonaCleanupRun = {
+  batchSize: number;
+  cancelCursor?: string | null;
+  cancelOlderThan?: number;
+  canceled: number;
+  cleanupId: string;
+  completedAt?: number;
+  createdAt: number;
+  deleteCursor?: string | null;
+  deleteOlderThan?: number;
+  deleted: number;
+  error?: string;
+  processed: number;
+  status: "running" | "succeeded" | "failed";
+  updatedAt: number;
+};
+
 /**
  * A utility for referencing a Convex component's exposed API.
  */
@@ -250,6 +280,47 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "internal",
         { jobId: string; now?: number },
         null,
+        Name
+      >;
+      listJobs: FunctionReference<
+        "query",
+        "internal",
+        {
+          cursor?: string | null;
+          limit?: number;
+          status?: "queued" | "running" | "succeeded" | "failed" | "canceled";
+        },
+        DaytonaJobPage,
+        Name
+      >;
+      cancelJobs: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          beforeUpdatedAt?: number;
+          cursor?: string | null;
+          limit?: number;
+          status?: "queued" | "running" | "succeeded" | "failed" | "canceled";
+        },
+        DaytonaCancelJobsResult,
+        Name
+      >;
+      getCleanup: FunctionReference<
+        "query",
+        "internal",
+        { cleanupId: string },
+        DaytonaCleanupRun | null,
+        Name
+      >;
+      startCleanup: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          batchSize?: number;
+          cancelActiveOlderThanMs?: number;
+          deleteCompletedOlderThanMs?: number;
+        },
+        { cleanupId: string },
         Name
       >;
       registerCallbackSecret: FunctionReference<

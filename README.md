@@ -290,6 +290,50 @@ The artifact mutation receives:
 }
 ```
 
+## Admin Jobs
+
+Admin operations are page-based. Use `listJobs` for dashboards, and use
+`cancelJobs` when you explicitly want to process one bounded page yourself:
+
+```ts
+const page = await daytona.listJobs(ctx, {
+  status: "running",
+  limit: 100,
+});
+
+const canceled = await daytona.cancelJobs(ctx, {
+  status: "running",
+  beforeUpdatedAt: Date.now() - 10 * 60_000,
+  cursor: page.nextCursor,
+  limit: 100,
+});
+```
+
+For “cancel all old jobs” or cleanup flows, start a resumable cleanup run. The
+component stores progress and reschedules itself until all pages are processed:
+
+```ts
+const { cleanupId: cancelCleanupId } = await daytona.cancelAllJobs(ctx, {
+  batchSize: 100,
+  olderThanMs: 10 * 60_000,
+});
+
+const { cleanupId } = await daytona.startCleanup(ctx, {
+  batchSize: 100,
+  cancelActiveOlderThanMs: 10 * 60_000,
+  deleteCompletedOlderThanMs: 24 * 60 * 60_000,
+});
+```
+
+Poll cleanup status from a query:
+
+```ts
+const cleanup = await daytona.getCleanup(ctx, { cleanupId });
+```
+
+Cleanup never scans all jobs in one function. It walks indexed pages, patches or
+deletes only the current batch, records counters, and schedules the next page.
+
 `seedDownloadUrl` is treated as a `tar.gz` archive and extracted before files
 are staged. `capture.uploadUrl` is a consumer-provided upload URL; generate it
 from your app when you want the archive in your own storage namespace.

@@ -6,6 +6,7 @@ import {
   internalMutation,
   internalQuery,
   mutation,
+  query,
 } from "./_generated/server.js";
 
 const internalApi = (anyApi as any).lib;
@@ -130,6 +131,50 @@ const artifactValidator = v.object({
   size: v.number(),
   storageId: v.optional(v.string()),
   uploadUrl: v.optional(v.string()),
+});
+
+const jobStatusValidator = v.union(
+  v.literal("queued"),
+  v.literal("running"),
+  v.literal("succeeded"),
+  v.literal("failed"),
+  v.literal("canceled"),
+);
+
+const jobValidator = v.object({
+  artifact: v.optional(artifactValidator),
+  completedAt: v.optional(v.number()),
+  createdAt: v.number(),
+  durationMs: v.optional(v.number()),
+  error: v.optional(v.string()),
+  exitCode: v.optional(v.number()),
+  jobId: v.id("jobs"),
+  output: v.string(),
+  sandboxId: v.optional(v.string()),
+  startedAt: v.optional(v.number()),
+  status: jobStatusValidator,
+  updatedAt: v.number(),
+});
+
+const cleanupRunValidator = v.object({
+  batchSize: v.number(),
+  cancelCursor: v.optional(v.union(v.string(), v.null())),
+  cancelOlderThan: v.optional(v.number()),
+  canceled: v.number(),
+  cleanupId: v.id("cleanupRuns"),
+  completedAt: v.optional(v.number()),
+  createdAt: v.number(),
+  deleteCursor: v.optional(v.union(v.string(), v.null())),
+  deleteOlderThan: v.optional(v.number()),
+  deleted: v.number(),
+  error: v.optional(v.string()),
+  processed: v.number(),
+  status: v.union(
+    v.literal("running"),
+    v.literal("succeeded"),
+    v.literal("failed"),
+  ),
+  updatedAt: v.number(),
 });
 
 const runResultValidator = v.object({
@@ -393,35 +438,37 @@ export const startCommand = action({
 
 export const getJob = internalQuery({
   args: { jobId: v.id("jobs") },
-  returns: v.union(
-    v.null(),
-    v.object({
-      artifact: v.optional(artifactValidator),
-      completedAt: v.optional(v.number()),
-      createdAt: v.number(),
-      durationMs: v.optional(v.number()),
-      error: v.optional(v.string()),
-      exitCode: v.optional(v.number()),
-      jobId: v.id("jobs"),
-      output: v.string(),
-      sandboxId: v.optional(v.string()),
-      startedAt: v.optional(v.number()),
-      status: v.union(
-        v.literal("queued"),
-        v.literal("running"),
-        v.literal("succeeded"),
-        v.literal("failed"),
-        v.literal("canceled"),
-      ),
-      updatedAt: v.number(),
-    }),
-  ),
+  returns: v.union(v.null(), jobValidator),
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
     if (!job) {
       return null;
     }
-    return { ...job, jobId: job._id };
+    return serializeJob(job);
+  },
+});
+
+export const listJobs = query({
+  args: {
+    cursor: v.optional(v.union(v.string(), v.null())),
+    limit: v.optional(v.number()),
+    status: v.optional(jobStatusValidator),
+  },
+  returns: v.object({
+    isDone: v.boolean(),
+    jobs: v.array(jobValidator),
+    nextCursor: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const page = await jobQuery(ctx, args.status).paginate({
+      cursor: args.cursor ?? null,
+      numItems: clampBatchSize(args.limit),
+    });
+    return {
+      isDone: page.isDone,
+      jobs: page.page.map(serializeJob),
+      nextCursor: page.continueCursor ?? null,
+    };
   },
 });
 
@@ -440,6 +487,139 @@ export const cancelJob = internalMutation({
       status: "canceled",
       updatedAt: now,
     });
+    return null;
+  },
+});
+
+export const cancelJobs = mutation({
+  args: {
+    beforeUpdatedAt: v.optional(v.number()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    limit: v.optional(v.number()),
+    status: v.optional(jobStatusValidator),
+  },
+  returns: v.object({
+    canceled: v.number(),
+    isDone: v.boolean(),
+    nextCursor: v.union(v.string(), v.null()),
+    processed: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    return await cancelJobsPage(ctx, {
+      beforeUpdatedAt: args.beforeUpdatedAt,
+      cursor: args.cursor ?? null,
+      limit: clampBatchSize(args.limit),
+      status: args.status,
+    });
+  },
+});
+
+export const getCleanup = query({
+  args: { cleanupId: v.id("cleanupRuns") },
+  returns: v.union(v.null(), cleanupRunValidator),
+  handler: async (ctx, args) => {
+    const cleanup = await ctx.db.get(args.cleanupId);
+    return cleanup ? serializeCleanupRun(cleanup) : null;
+  },
+});
+
+export const startCleanup = mutation({
+  args: {
+    batchSize: v.optional(v.number()),
+    cancelActiveOlderThanMs: v.optional(v.number()),
+    deleteCompletedOlderThanMs: v.optional(v.number()),
+  },
+  returns: v.object({ cleanupId: v.id("cleanupRuns") }),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const cleanupId = await ctx.db.insert("cleanupRuns", {
+      batchSize: clampBatchSize(args.batchSize),
+      cancelOlderThan:
+        args.cancelActiveOlderThanMs === undefined
+          ? undefined
+          : now - args.cancelActiveOlderThanMs,
+      canceled: 0,
+      createdAt: now,
+      deleteOlderThan:
+        args.deleteCompletedOlderThanMs === undefined
+          ? undefined
+          : now - args.deleteCompletedOlderThanMs,
+      deleted: 0,
+      processed: 0,
+      status: "running",
+      updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internalApi.processCleanupPage, {
+      cleanupId,
+    });
+    return { cleanupId };
+  },
+});
+
+export const processCleanupPage = internalMutation({
+  args: { cleanupId: v.id("cleanupRuns") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const cleanup = await ctx.db.get(args.cleanupId);
+    if (!cleanup || cleanup.status !== "running") {
+      return null;
+    }
+
+    try {
+      if (cleanup.cancelOlderThan !== undefined) {
+        const canceled = await cancelJobsPage(ctx, {
+          beforeUpdatedAt: cleanup.cancelOlderThan,
+          cursor: cleanup.cancelCursor ?? null,
+          limit: cleanup.batchSize,
+        });
+        await ctx.db.patch(args.cleanupId, {
+          cancelCursor: canceled.nextCursor,
+          canceled: cleanup.canceled + canceled.canceled,
+          processed: cleanup.processed + canceled.processed,
+          updatedAt: Date.now(),
+        });
+        if (!canceled.isDone) {
+          await ctx.scheduler.runAfter(0, internalApi.processCleanupPage, args);
+          return null;
+        }
+      }
+
+      const afterCancel = await ctx.db.get(args.cleanupId);
+      if (!afterCancel || afterCancel.status !== "running") {
+        return null;
+      }
+      if (afterCancel.deleteOlderThan !== undefined) {
+        const deleted = await deleteCompletedJobsPage(ctx, {
+          beforeUpdatedAt: afterCancel.deleteOlderThan,
+          cursor: afterCancel.deleteCursor ?? null,
+          limit: afterCancel.batchSize,
+        });
+        await ctx.db.patch(args.cleanupId, {
+          deleteCursor: deleted.nextCursor,
+          deleted: afterCancel.deleted + deleted.deleted,
+          processed: afterCancel.processed + deleted.processed,
+          updatedAt: Date.now(),
+        });
+        if (!deleted.isDone) {
+          await ctx.scheduler.runAfter(0, internalApi.processCleanupPage, args);
+          return null;
+        }
+      }
+
+      const now = Date.now();
+      await ctx.db.patch(args.cleanupId, {
+        completedAt: now,
+        status: "succeeded",
+        updatedAt: now,
+      });
+    } catch (error) {
+      await ctx.db.patch(args.cleanupId, {
+        completedAt: Date.now(),
+        error: error instanceof Error ? error.message : String(error),
+        status: "failed",
+        updatedAt: Date.now(),
+      });
+    }
     return null;
   },
 });
@@ -766,6 +946,107 @@ function normalizeCommandSpec(args: {
     sandboxId: args.sandbox?.id ?? args.sandboxId,
     seedDownloadUrl: args.sandbox?.seedDownloadUrl ?? args.seedDownloadUrl,
     timeout: args.timeout,
+  };
+}
+
+function clampBatchSize(limit: number | undefined) {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return 100;
+  }
+  return Math.min(Math.max(Math.trunc(limit), 1), 500);
+}
+
+function serializeJob(job: any) {
+  return { ...job, jobId: job._id };
+}
+
+function serializeCleanupRun(cleanup: any) {
+  return { ...cleanup, cleanupId: cleanup._id };
+}
+
+function jobQuery(
+  ctx: { db: any },
+  status?: Infer<typeof jobStatusValidator>,
+  beforeUpdatedAt?: number,
+) {
+  if (status !== undefined) {
+    return ctx.db
+      .query("jobs")
+      .withIndex("by_status_updatedAt", (q: any) =>
+        beforeUpdatedAt === undefined
+          ? q.eq("status", status)
+          : q.eq("status", status).lte("updatedAt", beforeUpdatedAt),
+      );
+  }
+  return ctx.db.query("jobs").withIndex("by_updatedAt", (q: any) =>
+    beforeUpdatedAt === undefined
+      ? q
+      : q.lte("updatedAt", beforeUpdatedAt),
+  );
+}
+
+async function cancelJobsPage(
+  ctx: { db: any },
+  args: {
+    beforeUpdatedAt?: number;
+    cursor: string | null;
+    limit: number;
+    status?: Infer<typeof jobStatusValidator>;
+  },
+) {
+  const page = await jobQuery(ctx, args.status, args.beforeUpdatedAt).paginate({
+    cursor: args.cursor,
+    numItems: args.limit,
+  });
+  const now = Date.now();
+  let canceled = 0;
+  for (const job of page.page) {
+    if (job.status === "queued" || job.status === "running") {
+      await ctx.db.patch(job._id, {
+        completedAt: now,
+        durationMs: job.startedAt ? now - job.startedAt : undefined,
+        status: "canceled",
+        updatedAt: now,
+      });
+      canceled += 1;
+    }
+  }
+  return {
+    canceled,
+    isDone: page.isDone,
+    nextCursor: page.continueCursor ?? null,
+    processed: page.page.length,
+  };
+}
+
+async function deleteCompletedJobsPage(
+  ctx: { db: any },
+  args: {
+    beforeUpdatedAt: number;
+    cursor: string | null;
+    limit: number;
+  },
+) {
+  const page = await jobQuery(ctx, undefined, args.beforeUpdatedAt).paginate({
+    cursor: args.cursor,
+    numItems: args.limit,
+  });
+  let deleted = 0;
+  for (const job of page.page) {
+    if (
+      job.status === "succeeded" ||
+      job.status === "failed" ||
+      job.status === "canceled"
+    ) {
+      await ctx.db.delete(job._id);
+      deleted += 1;
+    }
+  }
+  return {
+    deleted,
+    isDone: page.isDone,
+    nextCursor: page.continueCursor ?? null,
+    processed: page.page.length,
   };
 }
 

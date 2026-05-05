@@ -33,5 +33,28 @@ export default defineSchema({
       v.literal("canceled"),
     ),
     updatedAt: v.number(),
-  }),
+  })
+    .index("by_status_createdAt", ["status", "createdAt"])
+    .index("by_status_updatedAt", ["status", "updatedAt"])
+    .index("by_updatedAt", ["updatedAt"])
+    .index("by_sandboxId", ["sandboxId"]),
+  cleanupRuns: defineTable({
+    batchSize: v.number(),
+    cancelCursor: v.optional(v.union(v.string(), v.null())),
+    cancelOlderThan: v.optional(v.number()),
+    canceled: v.number(),
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    deleteCursor: v.optional(v.union(v.string(), v.null())),
+    deleteOlderThan: v.optional(v.number()),
+    deleted: v.number(),
+    error: v.optional(v.string()),
+    processed: v.number(),
+    status: v.union(
+      v.literal("running"),
+      v.literal("succeeded"),
+      v.literal("failed"),
+    ),
+    updatedAt: v.number(),
+  }).index("by_status_updatedAt", ["status", "updatedAt"]),
 });
