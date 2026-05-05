@@ -224,6 +224,10 @@ export type DaytonaExecResult = {
 };
 
 export type DaytonaActionContext = {
+  actions: Record<
+    string,
+    <Return = unknown>(args?: Record<string, unknown>) => Promise<Return>
+  >;
   exec: (
     command: string,
     options?: {
@@ -247,6 +251,14 @@ export type DaytonaActionContext = {
   ) => Promise<Return>;
   env: Record<string, string | undefined>;
   require: (id: string) => unknown;
+  mutations: Record<
+    string,
+    <Return = unknown>(args?: Record<string, unknown>) => Promise<Return>
+  >;
+  queries: Record<
+    string,
+    <Return = unknown>(args?: Record<string, unknown>) => Promise<Return>
+  >;
   __dirname: string;
   __filename: string;
 };
@@ -685,6 +697,20 @@ function buildDaytonaActionCode(
     const require = createRequire(process.cwd() + "/daytona-action.js");
     const __dirname = process.cwd();
     const __filename = __dirname + "/daytona-action.js";
+    const __makeConvexProxy = (kind) => {
+      const callback = __payload.callback;
+      const collections = {
+        action: callback?.functions.actions ?? {},
+        mutation: callback?.functions.mutations ?? {},
+        query: callback?.functions.queries ?? {},
+      };
+      return Object.fromEntries(
+        Object.keys(collections[kind]).map((name) => [
+          name,
+          (args) => __callConvex(kind, name, args),
+        ]),
+      );
+    };
     const __exec = async (command, options = {}) => {
       const execOptions = {
         cwd: options.cwd,
@@ -707,8 +733,11 @@ function buildDaytonaActionCode(
       }
     };
     const __ctx = {
+      actions: __makeConvexProxy("action"),
       exec: __exec,
       fs,
+      mutations: __makeConvexProxy("mutation"),
+      queries: __makeConvexProxy("query"),
       runAction: (name, args) => __callConvex("action", name, args),
       runMutation: (name, args) => __callConvex("mutation", name, args),
       runQuery: (name, args) => __callConvex("query", name, args),

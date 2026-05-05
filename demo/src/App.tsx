@@ -247,7 +247,7 @@ const defineActionExample = `export const analyzeText = daytona.defineAction({
     queries: { getFact: internal.facts.get },
   },
   handler: async (ctx, { text }) => {
-    const fact = await ctx.runQuery("getFact", {
+    const fact = await ctx.queries.getFact({
       key: "demoContext",
     });
     await ctx.fs.writeFile("input.txt", text);

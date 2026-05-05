@@ -132,9 +132,9 @@ export const enrichUser = daytona.defineAction({
     },
   },
   handler: async (ctx, { userId }) => {
-    const user = await ctx.runQuery<{ email: string }>("getUser", { userId });
+    const user = await ctx.queries.getUser<{ email: string }>({ userId });
     const profile = await fetch(`https://example.com/profile/${user.email}`);
-    await ctx.runMutation("saveProfile", {
+    await ctx.mutations.saveProfile({
       userId,
       profile: await profile.json(),
     });
