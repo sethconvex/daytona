@@ -98,6 +98,77 @@ Packages are explicit. Pass `packages: ["octokit"]` for the common npm path, or
 `install: { manager: "pnpm", packages: ["octokit"] }` /
 `install: { command: "npm ci" }` when you want control.
 
+## Bundled Daytona Actions
+
+Use bundled actions when you want Daytona code to be a real TypeScript module
+with imports, typechecking, and linting. Add a build step to the app using the
+component:
+
+```json
+{
+  "scripts": {
+    "daytona:build": "convex-daytona build",
+    "dev": "npm run daytona:build && convex dev",
+    "deploy": "npm run daytona:build && convex deploy"
+  }
+}
+```
+
+Create files under `convex/daytona/`:
+
+```ts
+// convex/daytona/getStringLength.ts
+import { defineDaytonaHandler } from "@convex-dev/daytona/entry";
+import type { internal } from "../_generated/api.js";
+import { normalizeName } from "../lib/normalizeName.js";
+
+export default defineDaytonaHandler<{
+  args: { userId: string; value: string };
+  returns: { email: string; length: number };
+  queries: {
+    getUser: typeof internal.users.get;
+  };
+}>(async (ctx, args) => {
+  const user = await ctx.queries.getUser({ userId: args.userId });
+  await ctx.exec("node --version");
+  return {
+    email: normalizeName(user.email),
+    length: args.value.length,
+  };
+});
+```
+
+Run `npm run daytona:build`. The CLI bundles those modules and writes
+`convex/_generated/daytona/manifest.ts`. Then wire the generated bundle into a
+normal Convex action:
+
+```ts
+import { DaytonaRunner } from "@convex-dev/daytona";
+import { v } from "convex/values";
+import { bundles } from "./_generated/daytona/manifest.js";
+import { components, internal } from "./_generated/api.js";
+
+const daytona = new DaytonaRunner(components.daytona);
+
+export const getStringLength = daytona.defineBundledAction({
+  args: { userId: v.string(), value: v.string() },
+  returns: v.object({ email: v.string(), length: v.number() }),
+  bundle: bundles.getStringLength,
+  sandbox: { image: "node:22" },
+  functions: {
+    queries: {
+      getUser: internal.users.get,
+    },
+  },
+});
+```
+
+The bundled module can import pure helper modules from `convex/`, Node built-ins,
+and npm packages. It cannot runtime-import Convex server APIs like
+`convex/server`, `_generated/server`, or `_generated/api`; use type-only imports
+for function reference types and pass the actual function handles through
+`defineBundledAction({ functions })`.
+
 ## Calling Back Into Convex
 
 To use `ctx.runQuery`, `ctx.runMutation`, or `ctx.runAction` from Daytona,

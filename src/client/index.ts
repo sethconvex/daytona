@@ -14,6 +14,7 @@ import {
 } from "convex/server";
 import type { PropertyValidators, Validator } from "convex/values";
 import type { ComponentApi } from "../component/_generated/component.js";
+import type { DaytonaBundle } from "../entry/index.js";
 
 export type DaytonaAuth = {
   apiKey?: string;
@@ -289,6 +290,28 @@ export type DaytonaActionDefinition<
   ) => ReturnValue | Promise<ReturnValue>;
 };
 
+export type DaytonaBundledActionDefinition<
+  ArgsValidator extends
+    | PropertyValidators
+    | Validator<any, "required", any>
+    | void,
+  ReturnsValidator extends
+    | PropertyValidators
+    | Validator<any, "required", any>
+    | void,
+  ReturnValue,
+> = DaytonaActionRuntimeOptions & {
+  args?: ArgsValidator;
+  bundle: DaytonaBundle<any, ReturnValue>;
+  capture?: DaytonaCommandCapture;
+  cwd?: string;
+  files?: DaytonaStagedFile[];
+  output?: DaytonaCommandOutputOptions;
+  sandbox?: Omit<CreateSandboxOptions, "language">;
+  seedDownloadUrl?: string;
+  returns?: ReturnsValidator;
+};
+
 type ActionCtx = Pick<GenericActionCtx<GenericDataModel>, "runAction">;
 type CallbackActionCtx = Pick<
   GenericActionCtx<GenericDataModel>,
@@ -504,6 +527,93 @@ export class DaytonaRunner {
     >;
   }
 
+  /**
+   * Define a Convex action whose implementation is a TypeScript module bundled
+   * by `convex-daytona build`. This lets Daytona-side code import pure helpers
+   * from the app's `convex/` directory while still calling Convex functions only
+   * through the explicit functions map generated with the bundle.
+   */
+  defineBundledAction<
+    ArgsValidator extends
+      | PropertyValidators
+      | Validator<any, "required", any>
+      | void,
+    ReturnsValidator extends
+      | PropertyValidators
+      | Validator<any, "required", any>
+      | void,
+    ReturnValue extends ReturnValueForOptionalValidator<ReturnsValidator> = any,
+    OneOrZeroArgs extends
+      ArgsArrayForOptionalValidator<ArgsValidator> = DefaultArgsForOptionalValidator<ArgsValidator>,
+  >(
+    definition: DaytonaBundledActionDefinition<
+      ArgsValidator,
+      ReturnsValidator,
+      ReturnValue
+    >,
+  ): RegisteredAction<
+    "public",
+    ArgsArrayToObject<OneOrZeroArgs>,
+    Awaited<ReturnValue>
+  > {
+    return actionGeneric({
+      args: definition.args as any,
+      returns: definition.returns as any,
+      handler: async (ctx, actionArgs: unknown = {}) => {
+        const callback = await this.callback(ctx, {
+          ...definition,
+          functions: definition.functions ?? definition.bundle.functions,
+        });
+        const scriptPath = ".convex-daytona/runner.cjs";
+        const result = await this.runCommand(ctx, {
+          auth: definition.auth,
+          capture: definition.capture,
+          command: `node ${shellQuote(scriptPath)}`,
+          create: mergeCreate(definition.sandbox, {
+            ...definition.create,
+            language: "javascript",
+          }),
+          createTimeout: definition.createTimeout,
+          cwd: definition.cwd,
+          deleteSandboxAfter: definition.deleteSandboxAfter,
+          deleteTimeout: definition.deleteTimeout,
+          env: definition.env,
+          files: [
+            ...(definition.files ?? []),
+            ...definition.bundle.files,
+            {
+              path: scriptPath,
+              content: buildDaytonaBundledActionCode(
+                definition.bundle.entrypoint,
+                actionArgs,
+                callback,
+              ),
+            },
+          ],
+          install: normalizeInstall({
+            ...definition,
+            packages: [
+              ...(definition.bundle.packages ?? []),
+              ...(definition.packages ?? []),
+            ],
+          }),
+          output: definition.output,
+          sandboxId: definition.sandboxId,
+          seedDownloadUrl: definition.seedDownloadUrl,
+          timeout: definition.timeout,
+        });
+        return parseDaytonaActionResult(
+          result.result.result,
+          result.result.exitCode,
+        );
+      },
+    }) as RegisteredAction<
+      "public",
+      ArgsArrayToObject<OneOrZeroArgs>,
+      Awaited<ReturnValue>
+    >;
+  }
+
   private async commandArgs(args: RunCommandOptions) {
     const capture =
       args.capture === undefined
@@ -643,7 +753,45 @@ function buildDaytonaActionCode(
   callback: DaytonaSerializedCallbacks | undefined,
 ) {
   const source = handler.toString();
-  const payload = base64EncodeUtf8(JSON.stringify({ args, callback }));
+  return buildDaytonaActionRuntimeCode({
+    args,
+    callback,
+    handlerExpression: `(${source})`,
+  });
+}
+
+function buildDaytonaBundledActionCode(
+  entrypoint: string,
+  args: unknown,
+  callback: DaytonaSerializedCallbacks | undefined,
+) {
+  return buildDaytonaActionRuntimeCode({
+    args,
+    callback,
+    handlerExpression: `
+      await (async () => {
+        const { pathToFileURL } = await import("node:url");
+        const path = await import("node:path");
+        const entryUrl = pathToFileURL(path.resolve(process.cwd(), ${JSON.stringify(entrypoint)})).href;
+        const module = await import(entryUrl);
+        const handler = module.default ?? module.handler;
+        if (typeof handler !== "function") {
+          throw new Error("Daytona bundle " + ${JSON.stringify(entrypoint)} + " must export a default handler function.");
+        }
+        return handler;
+      })()
+    `,
+  });
+}
+
+function buildDaytonaActionRuntimeCode(args: {
+  args: unknown;
+  callback: DaytonaSerializedCallbacks | undefined;
+  handlerExpression: string;
+}) {
+  const payload = base64EncodeUtf8(
+    JSON.stringify({ args: args.args, callback: args.callback }),
+  );
   return `
 (async () => {
   const __marker = ${JSON.stringify(DAYTONA_ACTION_RESULT_MARKER)};
@@ -746,7 +894,7 @@ function buildDaytonaActionCode(
       __dirname,
       __filename,
     };
-    const __handler = (${source});
+    const __handler = ${args.handlerExpression};
     const __value = await __handler(__ctx, __payload.args);
     console.log(__marker + JSON.stringify({
       ok: true,

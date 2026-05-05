@@ -27,11 +27,18 @@
     "dist",
     "src"
   ],
+  "bin": {
+    "convex-daytona": "./dist/cli/index.js"
+  },
   "exports": {
     "./package.json": "./package.json",
     ".": {
       "types": "./dist/client/index.d.ts",
       "default": "./dist/client/index.js"
+    },
+    "./entry": {
+      "types": "./dist/entry/index.d.ts",
+      "default": "./dist/entry/index.js"
     },
     "./test": "./src/test.ts",
     "./_generated/component": {
@@ -48,6 +55,9 @@
       "types": "./dist/component/convex.config.d.ts",
       "default": "./dist/component/convex.config.js"
     }
+  },
+  "dependencies": {
+    "esbuild": "^0.27.0"
   },
   "peerDependencies": {
     "convex": "^1.37.0"
