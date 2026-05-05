@@ -1,28 +1,20 @@
 import { defineDaytonaHandler } from "@convex-dev/daytona/entry";
-import type { FunctionReference } from "convex/server";
 
 export default defineDaytonaHandler<{
   args: { text: string };
   returns: {
-    dbContext: string;
+    filePreview: string;
     length: number;
     node: string;
     upper: string;
   };
-  queries: {
-    getFact: FunctionReference<
-      "query",
-      "internal",
-      { key: string },
-      { key: string; value: string } | null
-    >;
-  };
 }>(async (ctx, { text }) => {
-  const fact = await ctx.queries.getFact({ key: "demoContext" });
+  await ctx.fs.writeFile("input.txt", text);
   const node = await ctx.exec("node --version");
+  const filePreview = await ctx.fs.readFile("input.txt", "utf8");
 
   return {
-    dbContext: fact?.value ?? "No fact found.",
+    filePreview: filePreview.slice(0, 80),
     length: text.length,
     node: node.stdout.trim(),
     upper: text.toUpperCase(),

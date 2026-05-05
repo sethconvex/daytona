@@ -161,7 +161,7 @@ type SandboxLike = {
   labels?: Record<string, string>;
   memory?: number;
   name?: string;
-  snapshot?: string;
+  snapshot?: string | null;
   state?: string;
   target?: string;
   toolboxProxyUrl?: string;
@@ -1192,7 +1192,7 @@ function toDaytonaCreateParams(create: CreateSandboxArgs) {
 }
 
 function summarizeSandbox(sandbox: SandboxLike) {
-  return stripUndefined({
+  return stripNullish({
     autoArchiveInterval: sandbox.autoArchiveInterval,
     autoDeleteInterval: sandbox.autoDeleteInterval,
     autoStopInterval: sandbox.autoStopInterval,
@@ -1207,6 +1207,18 @@ function summarizeSandbox(sandbox: SandboxLike) {
     target: sandbox.target,
     updatedAt: sandbox.updatedAt,
   });
+}
+
+function stripNullish<T extends Record<string, unknown>>(value: T) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null),
+  ) as {
+    [K in keyof T as null extends T[K]
+      ? K
+      : undefined extends T[K]
+        ? K
+        : K]: Exclude<T[K], undefined | null>;
+  };
 }
 
 function normalizeExecuteResult(result: {

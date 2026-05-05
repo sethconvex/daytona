@@ -8,7 +8,7 @@ export const bundles = {
       {
         path: ".convex-daytona/getStringLength.mjs",
         content:
-          "function defineDaytonaHandler(handler) { return handler; }\nvar getStringLength_default = defineDaytonaHandler(async (ctx, { text }) => {\n  const fact = await ctx.queries.getFact({ key: \"demoContext\" });\n  const node = await ctx.exec(\"node --version\");\n  return {\n    dbContext: fact?.value ?? \"No fact found.\",\n    length: text.length,\n    node: node.stdout.trim(),\n    upper: text.toUpperCase()\n  };\n});\nexport {\n  getStringLength_default as default\n};\n",
+          "function defineDaytonaHandler(handler) { return handler; }\nvar getStringLength_default = defineDaytonaHandler(async (ctx, { text }) => {\n  await ctx.fs.writeFile(\"input.txt\", text);\n  const node = await ctx.exec(\"node --version\");\n  const filePreview = await ctx.fs.readFile(\"input.txt\", \"utf8\");\n  return {\n    filePreview: filePreview.slice(0, 80),\n    length: text.length,\n    node: node.stdout.trim(),\n    upper: text.toUpperCase()\n  };\n});\nexport {\n  getStringLength_default as default\n};\n",
       },
     ],
     source: "convex/daytona/getStringLength.ts",

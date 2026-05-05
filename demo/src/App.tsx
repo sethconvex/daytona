@@ -13,7 +13,7 @@ type AnalyzeResult = {
 };
 
 type BundledResult = {
-  dbContext: string;
+  filePreview: string;
   length: number;
   node: string;
   upper: string;
@@ -22,7 +22,6 @@ type BundledResult = {
 export function App() {
   const analyzeText = useAction(api.daytona.analyzeText);
   const runBundledLength = useAction(api.bundled.getStringLength);
-  const seedBundledDemo = useAction(api.bundled.seedBundledDemo);
   const startDurableJob = useAction(api.daytona.startDurableJob);
   const cancelJob = useMutation(api.jobs.cancel);
   const [text, setText] = useState("measure this string in daytona");
@@ -64,7 +63,6 @@ export function App() {
     setBusy("bundled");
     setError(null);
     try {
-      await seedBundledDemo({});
       setBundled((await runBundledLength({ text })) as BundledResult);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -223,8 +221,8 @@ function BundledResultCard({
           <dd>{result.upper}</dd>
         </div>
         <div>
-          <dt>DB Context</dt>
-          <dd>{result.dbContext}</dd>
+          <dt>File</dt>
+          <dd>{result.filePreview}</dd>
         </div>
       </dl>
     </div>
@@ -346,20 +344,13 @@ const defineActionExample = `export const analyzeText = daytona.defineAction({
 const bundledActionExample = `// convex/daytona/getStringLength.ts
 export default defineDaytonaHandler<{
   args: { text: string };
-  queries: { getFact: FunctionReference<
-    "query",
-    "internal",
-    { key: string },
-    { value: string } | null
-  > };
 }>(async (ctx, { text }) => {
-  const fact = await ctx.queries.getFact({
-    key: "demoContext",
-  });
+  await ctx.fs.writeFile("input.txt", text);
   const node = await ctx.exec("node --version");
+  const filePreview = await ctx.fs.readFile("input.txt", "utf8");
 
   return {
-    dbContext: fact?.value ?? "No fact found.",
+    filePreview: filePreview.slice(0, 80),
     length: text.length,
     node: node.stdout.trim(),
     upper: text.toUpperCase(),
@@ -370,9 +361,6 @@ export default defineDaytonaHandler<{
 export const getStringLength = daytona.defineBundledAction({
   bundle: bundles.getStringLength,
   sandbox: { image: "node:22" },
-  functions: {
-    queries: { getFact: internal.facts.get },
-  },
 });`;
 
 const durableJobExample = `export const runBuild = daytona.defineDurableAction({
