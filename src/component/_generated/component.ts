@@ -15,6 +15,9 @@ type DaytonaAuth = {
   apiUrl?: string;
   jwtToken?: string;
   organizationId?: string;
+  provider?: "daytona" | "sprites";
+  spritesApiUrl?: string;
+  spritesToken?: string;
   target?: string;
 };
 

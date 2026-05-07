@@ -1,17 +1,17 @@
 # Convex Daytona Component
 
-Run Convex action work in Daytona sandboxes when the default Convex runtime or `"use node"` is not the right execution environment.
+Run Convex action work in remote sandboxes when the default Convex runtime or `"use node"` is not the right execution environment.
 
-This component gives your app Convex actions a small Daytona runtime bridge:
+This component gives your app Convex actions a small sandbox runtime bridge:
 
-- create or reuse Daytona sandboxes
+- create or reuse Daytona sandboxes, or use Fly Sprites as a drop-in provider
 - run shell commands
-- run Python, TypeScript, or JavaScript snippets with Daytona's code runner
+- run Python, TypeScript, or JavaScript snippets
 - keep Daytona credentials in your app environment instead of the component environment
 
-The Convex action still orchestrates the call, but the actual code or command runs inside Daytona.
-The component talks to Daytona over `fetch`, so it can run in the standard
-Convex component runtime without the Daytona Node SDK.
+The Convex action still orchestrates the call, but the actual code or command
+runs inside the sandbox. The component talks to providers over `fetch`, so it
+can run in the standard Convex component runtime without provider Node SDKs.
 
 ## Installation
 
@@ -38,6 +38,29 @@ npx convex env set DAYTONA_API_KEY your_key
 ```
 
 You can also use `DAYTONA_JWT_TOKEN` with `DAYTONA_ORGANIZATION_ID`, plus optional `DAYTONA_API_URL` and `DAYTONA_TARGET`.
+
+For the Fly Sprites provider, set:
+
+```sh
+npx convex env set DAYTONA_PROVIDER sprites
+npx convex env set SPRITES_TOKEN your_sprites_org_token
+```
+
+Or configure the runner explicitly:
+
+```ts
+const daytona = new DaytonaRunner(components.daytona, {
+  auth: {
+    provider: "sprites",
+    spritesToken: process.env.SPRITES_TOKEN,
+  },
+});
+```
+
+The `runCommand`, `defineAction`, bundled action, and durable job APIs stay the
+same. Provider-specific sandbox fields are best-effort: Daytona honors image,
+network, resource, and language settings; Sprites currently creates a default
+Sprite and runs commands with HTTP exec.
 
 ## Usage
 

@@ -1,7 +1,7 @@
 import { DaytonaRunner } from "@convex-dev/daytona";
 import { anyApi, componentsGeneric } from "convex/server";
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { action, mutation, query } from "./_generated/server";
 
 const components = componentsGeneric();
 const internalApi = anyApi as any;
@@ -42,6 +42,25 @@ export const analyzeText = daytona.defineAction({
       installedPackageResult: lodash.startCase(text),
       length: text.length,
       wordCount: lodash.words(text).length,
+    };
+  },
+});
+
+export const checkCodeStorage = action({
+  args: {},
+  handler: async (ctx) => {
+    const result = await daytona.runCommand(ctx as any, {
+      command:
+        "set +e; curl -vkI --connect-timeout 8 --max-time 18 https://convex.code.storage 2>&1; echo EXIT:$?",
+      create: { name: `code-storage-${Date.now()}` },
+      deleteSandboxAfter: true,
+      timeout: 30,
+    });
+    return {
+      exitCode: result.result.exitCode,
+      output: result.result.result,
+      provider: result.sandbox.target,
+      sandboxId: result.sandbox.id,
     };
   },
 });

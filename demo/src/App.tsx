@@ -21,8 +21,16 @@ type BundledResult = {
   wordCount: number;
 };
 
+type CodeStorageResult = {
+  exitCode: number;
+  output: string;
+  provider?: string;
+  sandboxId: string;
+};
+
 export function App() {
   const analyzeText = useAction(api.daytona.analyzeText);
+  const checkCodeStorage = useAction(api.daytona.checkCodeStorage);
   const runBundledLength = useAction(api.bundled.getStringLength);
   const startDurableJob = useAction(api.daytona.startDurableJob);
   const cancelJob = useMutation(api.daytona.cancelDurableJob);
@@ -31,7 +39,10 @@ export function App() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
   const [bundled, setBundled] = useState<BundledResult | null>(null);
-  const [busy, setBusy] = useState<"analysis" | "bundled" | "job" | null>(null);
+  const [codeStorage, setCodeStorage] = useState<CodeStorageResult | null>(null);
+  const [busy, setBusy] = useState<
+    "analysis" | "bundled" | "codeStorage" | "job" | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const job = useQuery(api.daytona.durableJob, jobId ? { jobId } : "skip");
   const outputPage = useQuery(
@@ -62,6 +73,18 @@ export function App() {
     setError(null);
     try {
       setBundled((await runBundledLength({ text })) as BundledResult);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runCodeStorageProbe() {
+    setBusy("codeStorage");
+    setError(null);
+    try {
+      setCodeStorage((await checkCodeStorage({})) as CodeStorageResult);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -136,6 +159,27 @@ export function App() {
             Run bundled action
           </button>
           <BundledResultCard result={bundled} loading={busy === "bundled"} />
+        </article>
+
+        <article className="panel">
+          <div className="panelHeader">
+            <Terminal size={18} />
+            <h2>code.storage smoke test</h2>
+          </div>
+          <CodeBlock code={spritesProviderExample} />
+          <button onClick={runCodeStorageProbe} disabled={busy !== null}>
+            <Play size={16} />
+            Test sandbox egress
+          </button>
+          <pre className="terminal">
+            {busy === "codeStorage"
+              ? "Checking convex.code.storage from the sandbox..."
+              : codeStorage?.output || "Result will appear here."}
+          </pre>
+          <div className="jobMeta">
+            {codeStorage && <span>exit {codeStorage.exitCode}</span>}
+            {codeStorage?.provider && <span>{codeStorage.provider}</span>}
+          </div>
         </article>
 
         <article className="panel">
@@ -396,4 +440,17 @@ const durableJobExample = `export const runBuild = daytona.defineDurableAction({
 
     console.log("done " + lodash.startCase(label));
   },
+});`;
+
+const spritesProviderExample = `// Same component API, different provider.
+const daytona = new DaytonaRunner(components.daytona, {
+  auth: {
+    provider: "sprites",
+    spritesToken: process.env.SPRITES_TOKEN,
+  },
+});
+
+await daytona.runCommand(ctx, {
+  command: "curl -vkI https://convex.code.storage",
+  timeout: 30,
 });`;

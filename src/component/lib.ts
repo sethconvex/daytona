@@ -18,6 +18,9 @@ const authValidator = v.object({
   apiUrl: v.optional(v.string()),
   jwtToken: v.optional(v.string()),
   organizationId: v.optional(v.string()),
+  provider: v.optional(v.union(v.literal("daytona"), v.literal("sprites"))),
+  spritesApiUrl: v.optional(v.string()),
+  spritesToken: v.optional(v.string()),
   target: v.optional(v.string()),
 });
 
@@ -234,6 +237,7 @@ type SandboxLike = {
 };
 
 type SandboxRuntime = SandboxLike & {
+  provider?: "daytona" | "sprites";
   process: {
     createSession: (sessionId: string) => Promise<void>;
     deleteSession: (sessionId: string) => Promise<void>;
@@ -1310,6 +1314,9 @@ async function executeStreamingCommand(
     timeout?: number;
   },
 ) {
+  if (sandbox.provider === "sprites") {
+    return await executeBufferedCommand(ctx, sandbox, args);
+  }
   const runId = crypto.randomUUID();
   const sessionId = `daytona-${runId}`;
   const emitter = createStreamEmitter(ctx, {
@@ -1376,6 +1383,39 @@ async function executeStreamingCommand(
     await emitter.flush();
     await sandbox.process.deleteSession(sessionId).catch(() => undefined);
   }
+}
+
+async function executeBufferedCommand(
+  ctx: { runMutation: (handle: any, args: any) => Promise<unknown> },
+  sandbox: SandboxRuntime,
+  args: {
+    command: string;
+    cwd?: string;
+    env?: Record<string, string>;
+    jobId?: string;
+    output: OutputArgs;
+    timeout?: number;
+  },
+) {
+  const runId = crypto.randomUUID();
+  const emitter = createStreamEmitter(ctx, {
+    jobId: args.jobId,
+    lineBuffered: args.output.lineBuffered ?? true,
+    onOutput: args.output.onOutput,
+    redact: compileRedactor(args.output.redact, args.env),
+    runId,
+    sandboxId: sandbox.id,
+  });
+  const result = await sandbox.process.executeCommand(
+    args.command,
+    args.cwd,
+    args.env,
+    args.timeout,
+  );
+  emitter.push("stdout", result.artifacts?.stdout ?? result.result);
+  emitter.push("stderr", result.stderr ?? "");
+  await emitter.flush();
+  return result;
 }
 
 async function waitForSessionCommandExit(
@@ -1660,7 +1700,13 @@ function addCallbackSecret(
   };
 }
 
-function makeDaytona(auth: DaytonaAuth) {
+function makeSandboxClient(auth: DaytonaAuth) {
+  if (auth.provider === "sprites") {
+    if (!auth.spritesToken) {
+      throw new Error("Provide SPRITES_TOKEN or auth.spritesToken for Sprites.");
+    }
+    return new SpritesHttpClient(auth);
+  }
   if (!auth.apiKey && !(auth.jwtToken && auth.organizationId)) {
     throw new Error(
       "Provide DAYTONA_API_KEY or both DAYTONA_JWT_TOKEN and DAYTONA_ORGANIZATION_ID.",
@@ -1669,8 +1715,10 @@ function makeDaytona(auth: DaytonaAuth) {
   return new DaytonaHttpClient(auth);
 }
 
+const makeDaytona = makeSandboxClient;
+
 async function resolveSandbox(
-  daytona: DaytonaHttpClient,
+  daytona: SandboxClient,
   args: {
     create?: CreateSandboxArgs;
     createTimeout?: number;
@@ -1690,7 +1738,7 @@ async function resolveSandbox(
 }
 
 async function createNewSandbox(
-  daytona: DaytonaHttpClient,
+  daytona: SandboxClient,
   create: CreateSandboxArgs = {},
   createTimeout?: number,
 ) {
@@ -2087,6 +2135,273 @@ class DaytonaHttpClient {
       "x-daytona-source": "convex-component",
     });
   }
+}
+
+type SandboxClient = {
+  create(
+    params: ReturnType<typeof toDaytonaCreateParams>,
+    options?: { timeout?: number },
+  ): Promise<SandboxRuntime>;
+  delete(sandbox: SandboxLike, timeout?: number): Promise<void>;
+  get(sandboxId: string): Promise<SandboxRuntime>;
+};
+
+class SpritesHttpClient {
+  private readonly apiUrl: string;
+  private readonly token: string;
+
+  constructor(auth: DaytonaAuth) {
+    if (!auth.spritesToken) {
+      throw new Error("Provide SPRITES_TOKEN or auth.spritesToken for Sprites.");
+    }
+    this.apiUrl = (auth.spritesApiUrl ?? "https://api.sprites.dev").replace(
+      /\/$/,
+      "",
+    );
+    this.token = auth.spritesToken;
+  }
+
+  async create(
+    params: ReturnType<typeof toDaytonaCreateParams>,
+    _options: { timeout?: number } = {},
+  ) {
+    const name = params.name ?? `convex-${crypto.randomUUID()}`;
+    const sprite = await this.request<SpriteLike>("/v1/sprites", {
+      body: { name },
+      method: "POST",
+    });
+    return this.wrapSprite(sprite);
+  }
+
+  async delete(sandbox: SandboxLike, _timeout?: number) {
+    await this.request(`/v1/sprites/${encodeURIComponent(sandbox.id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async get(sandboxId: string) {
+    const sprite = await this.request<SpriteLike>(
+      `/v1/sprites/${encodeURIComponent(sandboxId)}`,
+    );
+    return this.wrapSprite(sprite);
+  }
+
+  private wrapSprite(sprite: SpriteLike): SandboxRuntime {
+    const sandbox = summarizeSprite(sprite);
+    return {
+      ...sandbox,
+      provider: "sprites",
+      process: {
+        codeRun: async (code, params, timeout) => {
+          const result = await this.execute(
+            sandbox.id,
+            "node",
+            ["-e", code, ...(params?.argv ?? [])],
+            {
+              env: params?.env,
+              timeout,
+            },
+          );
+          return {
+            artifacts: { stdout: result.stdout },
+            exitCode: result.exitCode,
+            result: result.stdout,
+          };
+        },
+        createSession: async () => {
+          throw new Error("Sprites streaming sessions are not implemented yet.");
+        },
+        deleteSession: async () => undefined,
+        executeCommand: async (command, cwd, env, timeout) => {
+          const result = await this.execute(sandbox.id, "bash", ["-lc", command], {
+            cwd,
+            env,
+            timeout,
+          });
+          return {
+            artifacts: { stdout: result.stdout },
+            exitCode: result.exitCode,
+            result: result.stdout,
+            stderr: result.stderr,
+          };
+        },
+        executeSessionCommand: async () => {
+          throw new Error("Sprites streaming sessions are not implemented yet.");
+        },
+        getSessionCommand: async () => {
+          throw new Error("Sprites streaming sessions are not implemented yet.");
+        },
+        getSessionCommandLogs: async () => {
+          throw new Error("Sprites streaming sessions are not implemented yet.");
+        },
+      },
+    };
+  }
+
+  private async execute(
+    spriteName: string,
+    path: string,
+    argv: string[],
+    options: {
+      cwd?: string;
+      env?: Record<string, string>;
+      timeout?: number;
+    } = {},
+  ) {
+    const params = new URLSearchParams();
+    for (const arg of [path, ...argv]) {
+      params.append("cmd", arg);
+    }
+    if (options.cwd) {
+      params.set("dir", options.cwd);
+    }
+    for (const [key, value] of Object.entries(options.env ?? {})) {
+      assertValidEnvName(key);
+      params.append("env", `${key}=${value}`);
+    }
+    const bytes = await this.bytesRequest(
+      `/v1/sprites/${encodeURIComponent(spriteName)}/exec?${params.toString()}`,
+      {
+        method: "POST",
+        timeoutMs: commandRequestTimeoutMs(options.timeout),
+      },
+    );
+    return parseSpritesExecBytes(bytes);
+  }
+
+  private async request<T>(
+    path: string,
+    init: { body?: unknown; method?: string } = {},
+  ) {
+    const response = await fetch(`${this.apiUrl}${path}`, {
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      headers: this.headers(init.body !== undefined),
+      method: init.method ?? "GET",
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(
+        `Sprites API request failed: HTTP ${response.status}${body ? ` ${body}` : ""}`,
+      );
+    }
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    return (await response.json()) as T;
+  }
+
+  private async bytesRequest(
+    path: string,
+    init: { method?: string; timeoutMs?: number } = {},
+  ) {
+    const controller =
+      init.timeoutMs === undefined ? undefined : new AbortController();
+    const timeoutId =
+      controller === undefined
+        ? undefined
+        : setTimeout(() => controller.abort(), init.timeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(`${this.apiUrl}${path}`, {
+        headers: this.headers(false, "*/*"),
+        method: init.method ?? "GET",
+        signal: controller?.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new DaytonaCommandTimeoutError(
+          `Sprites API request timed out after ${Math.round((init.timeoutMs ?? 0) / 1000)} seconds.`,
+        );
+      }
+      throw error;
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(
+        `Sprites API request failed: HTTP ${response.status}${body ? ` ${body}` : ""}`,
+      );
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  private headers(json: boolean, accept = "application/json") {
+    return stripUndefined({
+      accept,
+      authorization: `Bearer ${this.token}`,
+      "content-type": json ? "application/json" : undefined,
+    });
+  }
+}
+
+type SpriteLike = {
+  created_at?: string;
+  id: string;
+  name: string;
+  status?: string;
+  updated_at?: string;
+  url?: string;
+};
+
+function summarizeSprite(sprite: SpriteLike): SandboxLike & {
+  provider: "sprites";
+} {
+  return {
+    createdAt: sprite.created_at,
+    id: sprite.name,
+    name: sprite.name,
+    provider: "sprites",
+    state: sprite.status,
+    target: "sprites",
+    updatedAt: sprite.updated_at,
+  };
+}
+
+function parseSpritesExecBytes(bytes: Uint8Array) {
+  const decoder = new TextDecoder();
+  let stream: "stdout" | "stderr" | "exit" | undefined;
+  let exitCode = 0;
+  const chunks = {
+    stderr: [] as Uint8Array[],
+    stdout: [] as Uint8Array[],
+  };
+  let current: number[] = [];
+  const flush = () => {
+    if (!stream || stream === "exit" || current.length === 0) {
+      current = [];
+      return;
+    }
+    chunks[stream].push(new Uint8Array(current));
+    current = [];
+  };
+  for (const byte of bytes) {
+    if (byte === 1 || byte === 2 || byte === 3) {
+      flush();
+      stream = byte === 1 ? "stdout" : byte === 2 ? "stderr" : "exit";
+      current = [];
+      continue;
+    }
+    if (stream === "exit") {
+      exitCode = byte;
+      stream = undefined;
+      current = [];
+      continue;
+    }
+    current.push(byte);
+  }
+  flush();
+  return {
+    exitCode,
+    stderr: decodeByteChunks(decoder, chunks.stderr),
+    stdout: decodeByteChunks(decoder, chunks.stdout),
+  };
+}
+
+function decodeByteChunks(decoder: TextDecoder, chunks: Uint8Array[]) {
+  return chunks.map((chunk) => decoder.decode(chunk)).join("");
 }
 
 function commandRequestTimeoutMs(timeoutSeconds: number | undefined) {

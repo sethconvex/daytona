@@ -21,8 +21,13 @@ export type DaytonaAuth = {
   apiUrl?: string;
   jwtToken?: string;
   organizationId?: string;
+  provider?: SandboxProvider;
+  spritesApiUrl?: string;
+  spritesToken?: string;
   target?: string;
 };
+
+export type SandboxProvider = "daytona" | "sprites";
 
 export type SandboxLanguage = "python" | "typescript" | "javascript";
 
@@ -887,11 +892,30 @@ export class DaytonaRunner {
         overrides?.organizationId ??
         this.options.auth?.organizationId ??
         process.env.DAYTONA_ORGANIZATION_ID,
+      provider:
+        overrides?.provider ??
+        this.options.auth?.provider ??
+        envProvider(process.env.DAYTONA_PROVIDER ?? process.env.SANDBOX_PROVIDER),
+      spritesApiUrl:
+        overrides?.spritesApiUrl ??
+        this.options.auth?.spritesApiUrl ??
+        process.env.SPRITES_API_URL,
+      spritesToken:
+        overrides?.spritesToken ??
+        this.options.auth?.spritesToken ??
+        process.env.SPRITES_TOKEN ??
+        process.env.SPRITE_TOKEN,
       target:
         overrides?.target ??
         this.options.auth?.target ??
         process.env.DAYTONA_TARGET,
     });
+    if ((auth.provider ?? "daytona") === "sprites") {
+      if (!auth.spritesToken) {
+        throw new Error("Set SPRITES_TOKEN or pass auth: { provider: \"sprites\", spritesToken }.");
+      }
+      return auth;
+    }
     if (!auth.apiKey && !(auth.jwtToken && auth.organizationId)) {
       throw new Error(
         "Set DAYTONA_API_KEY, or set DAYTONA_JWT_TOKEN and DAYTONA_ORGANIZATION_ID.",
@@ -1253,6 +1277,13 @@ function defaultCallbackUrl() {
     return undefined;
   }
   return `${siteUrl.replace(/\/$/, "")}/daytona/callback`;
+}
+
+function envProvider(value: string | undefined): SandboxProvider | undefined {
+  if (value === "sprites" || value === "daytona") {
+    return value;
+  }
+  return undefined;
 }
 
 export type DaytonaCallbackOptions = {
