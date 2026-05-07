@@ -84,6 +84,13 @@ const commandSandboxValidator = v.object({
 const outputValidator = v.object({
   lineBuffered: v.optional(v.boolean()),
   onOutput: v.optional(v.string()),
+  redact: v.optional(
+    v.object({
+      env: v.optional(v.array(v.string())),
+      patterns: v.optional(v.array(v.string())),
+      values: v.optional(v.array(v.string())),
+    }),
+  ),
 });
 
 const sandboxSummaryValidator = v.object({
@@ -149,11 +156,21 @@ const jobValidator = v.object({
   error: v.optional(v.string()),
   exitCode: v.optional(v.number()),
   jobId: v.id("jobs"),
-  output: v.string(),
   sandboxId: v.optional(v.string()),
   startedAt: v.optional(v.number()),
   status: jobStatusValidator,
   updatedAt: v.number(),
+});
+
+const jobOutputValidator = v.object({
+  content: v.string(),
+  createdAt: v.number(),
+  jobId: v.id("jobs"),
+  outputId: v.id("jobOutputs"),
+  runId: v.string(),
+  sandboxId: v.string(),
+  sequence: v.number(),
+  stream: v.union(v.literal("stdout"), v.literal("stderr")),
 });
 
 const cleanupRunValidator = v.object({
@@ -168,6 +185,9 @@ const cleanupRunValidator = v.object({
   deleteOlderThan: v.optional(v.number()),
   deleted: v.number(),
   error: v.optional(v.string()),
+  outputCursor: v.optional(v.union(v.string(), v.null())),
+  outputDeleted: v.number(),
+  outputOlderThan: v.optional(v.number()),
   processed: v.number(),
   status: v.union(
     v.literal("running"),
@@ -235,6 +255,7 @@ type SandboxRuntime = SandboxLike & {
       artifacts?: { charts?: unknown[]; stdout: string };
       exitCode: number;
       result: string;
+      stderr?: string;
     }>;
     executeSessionCommand: (
       sessionId: string,
@@ -254,6 +275,7 @@ type SandboxRuntime = SandboxLike & {
       commandId: string,
       onStdout: (chunk: string) => void,
       onStderr: (chunk: string) => void,
+      timeout?: number,
     ) => Promise<void>;
   };
 };
@@ -272,6 +294,13 @@ type CommandSpec = {
   sandboxId?: string;
   seedDownloadUrl?: string;
   timeout?: number;
+};
+
+type ExecuteResultLike = {
+  artifacts?: { charts?: unknown[]; stdout: string };
+  exitCode: number;
+  result: string;
+  stderr?: string;
 };
 
 export const createSandbox = action({
@@ -371,20 +400,25 @@ export const runCommand = action({
         install: spec.install,
         seedDownloadUrl: spec.seedDownloadUrl,
       });
-      result = spec.output?.onOutput
-        ? await executeStreamingCommand(ctx, sandbox, {
+      const commandOperation: Promise<ExecuteResultLike> = spec.output?.onOutput
+        ? executeStreamingCommand(ctx, sandbox, {
             command: spec.command,
             cwd: spec.cwd,
             env,
             output: spec.output,
             timeout: spec.timeout,
           })
-        : await sandbox.process.executeCommand(
+        : sandbox.process.executeCommand(
             spec.command,
             spec.cwd,
             env,
             spec.timeout,
           );
+      result = await withCommandDeadline(
+        commandOperation,
+        spec.timeout,
+        "Daytona command",
+      );
       artifact =
         spec.capture === undefined
           ? undefined
@@ -472,6 +506,37 @@ export const listJobs = query({
   },
 });
 
+export const listJobOutput = query({
+  args: {
+    afterSequence: v.optional(v.number()),
+    jobId: v.id("jobs"),
+    limit: v.optional(v.number()),
+  },
+  returns: v.object({
+    isDone: v.boolean(),
+    nextSequence: v.union(v.number(), v.null()),
+    output: v.array(jobOutputValidator),
+  }),
+  handler: async (ctx, args) => {
+    const limit = clampBatchSize(args.limit);
+    const rows = await ctx.db
+      .query("jobOutputs")
+      .withIndex("by_job_sequence", (q) =>
+        args.afterSequence === undefined
+          ? q.eq("jobId", args.jobId)
+          : q.eq("jobId", args.jobId).gt("sequence", args.afterSequence),
+      )
+      .take(limit + 1);
+    const page = rows.slice(0, limit);
+    return {
+      isDone: rows.length <= limit,
+      nextSequence:
+        page.length === 0 ? (args.afterSequence ?? null) : page[page.length - 1].sequence,
+      output: page.map(serializeJobOutput),
+    };
+  },
+});
+
 export const cancelJob = internalMutation({
   args: { jobId: v.id("jobs"), now: v.optional(v.number()) },
   returns: v.null(),
@@ -545,6 +610,11 @@ export const startCleanup = mutation({
           ? undefined
           : now - args.deleteCompletedOlderThanMs,
       deleted: 0,
+      outputDeleted: 0,
+      outputOlderThan:
+        args.deleteCompletedOlderThanMs === undefined
+          ? undefined
+          : now - args.deleteCompletedOlderThanMs,
       processed: 0,
       status: "running",
       updatedAt: now,
@@ -606,6 +676,28 @@ export const processCleanupPage = internalMutation({
         }
       }
 
+      const afterDelete = await ctx.db.get(args.cleanupId);
+      if (!afterDelete || afterDelete.status !== "running") {
+        return null;
+      }
+      if (afterDelete.outputOlderThan !== undefined) {
+        const outputDeleted = await deleteJobOutputsPage(ctx, {
+          beforeCreatedAt: afterDelete.outputOlderThan,
+          cursor: afterDelete.outputCursor ?? null,
+          limit: afterDelete.batchSize,
+        });
+        await ctx.db.patch(args.cleanupId, {
+          outputCursor: outputDeleted.nextCursor,
+          outputDeleted: afterDelete.outputDeleted + outputDeleted.deleted,
+          processed: afterDelete.processed + outputDeleted.processed,
+          updatedAt: Date.now(),
+        });
+        if (!outputDeleted.isDone) {
+          await ctx.scheduler.runAfter(0, internalApi.processCleanupPage, args);
+          return null;
+        }
+      }
+
       const now = Date.now();
       await ctx.db.patch(args.cleanupId, {
         completedAt: now,
@@ -630,7 +722,6 @@ export const createJob = internalMutation({
   handler: async (ctx, args) => {
     return await ctx.db.insert("jobs", {
       createdAt: args.now,
-      output: "",
       status: "queued",
       updatedAt: args.now,
     });
@@ -690,14 +781,18 @@ export const runJob = internalAction({
         install: spec.install,
         seedDownloadUrl: spec.seedDownloadUrl,
       });
-      const result = await executeStreamingCommand(ctx, sandbox, {
-        command: spec.command,
-        cwd: spec.cwd,
-        env,
-        jobId,
-        output: spec.output ?? {},
-        timeout: spec.timeout,
-      });
+      const result = await withCommandDeadline(
+        executeStreamingCommand(ctx, sandbox, {
+          command: spec.command,
+          cwd: spec.cwd,
+          env,
+          jobId,
+          output: spec.output ?? {},
+          timeout: spec.timeout,
+        }),
+        spec.timeout,
+        "Durable Daytona command",
+      );
       const artifact =
         spec.capture === undefined
           ? undefined
@@ -749,6 +844,10 @@ export const appendJobOutput = internalMutation({
     content: v.string(),
     jobId: v.id("jobs"),
     now: v.number(),
+    runId: v.string(),
+    sandboxId: v.string(),
+    sequence: v.number(),
+    stream: v.union(v.literal("stdout"), v.literal("stderr")),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -756,8 +855,16 @@ export const appendJobOutput = internalMutation({
     if (!job) {
       return null;
     }
+    await ctx.db.insert("jobOutputs", {
+      content: args.content,
+      createdAt: args.now,
+      jobId: args.jobId,
+      runId: args.runId,
+      sandboxId: args.sandboxId,
+      sequence: args.sequence,
+      stream: args.stream,
+    });
     await ctx.db.patch(args.jobId, {
-      output: `${job.output}${args.content}`,
       updatedAt: args.now,
     });
     return null;
@@ -960,6 +1067,10 @@ function serializeJob(job: any) {
   return { ...job, jobId: job._id };
 }
 
+function serializeJobOutput(output: any) {
+  return { ...output, outputId: output._id };
+}
+
 function serializeCleanupRun(cleanup: any) {
   return { ...cleanup, cleanupId: cleanup._id };
 }
@@ -1044,6 +1155,34 @@ async function deleteCompletedJobsPage(
   }
   return {
     deleted,
+    isDone: page.isDone,
+    nextCursor: page.continueCursor ?? null,
+    processed: page.page.length,
+  };
+}
+
+async function deleteJobOutputsPage(
+  ctx: { db: any },
+  args: {
+    beforeCreatedAt: number;
+    cursor: string | null;
+    limit: number;
+  },
+) {
+  const page = await ctx.db
+    .query("jobOutputs")
+    .withIndex("by_createdAt", (q: any) =>
+      q.lte("createdAt", args.beforeCreatedAt),
+    )
+    .paginate({
+      cursor: args.cursor,
+      numItems: args.limit,
+    });
+  for (const output of page.page) {
+    await ctx.db.delete(output._id);
+  }
+  return {
+    deleted: page.page.length,
     isDone: page.isDone,
     nextCursor: page.continueCursor ?? null,
     processed: page.page.length,
@@ -1177,29 +1316,48 @@ async function executeStreamingCommand(
     jobId: args.jobId,
     lineBuffered: args.output.lineBuffered ?? true,
     onOutput: args.output.onOutput,
+    redact: compileRedactor(args.output.redact, args.env),
     runId,
     sandboxId: sandbox.id,
   });
-  await sandbox.process.createSession(sessionId);
   try {
-    const started = await sandbox.process.executeSessionCommand(
-      sessionId,
-      {
-        command: buildSessionCommand(args.command, args.cwd, args.env),
-        runAsync: true,
-        suppressInputEcho: true,
-      },
-      args.timeout,
+    await sandbox.process.createSession(sessionId);
+  } catch (error) {
+    throw new DaytonaStreamingSetupError(
+      `Daytona streaming setup failed while creating session ${sessionId}. Run without output.onOutput or retry after Daytona session APIs are healthy.`,
+      error,
     );
+  }
+  try {
+    let started: { cmdId?: string; exitCode?: number; stdout?: string; stderr?: string };
+    try {
+      started = await sandbox.process.executeSessionCommand(
+        sessionId,
+        {
+          command: buildSessionCommand(args.command, args.cwd, args.env),
+          runAsync: true,
+          suppressInputEcho: true,
+        },
+        args.timeout,
+      );
+    } catch (error) {
+      throw new DaytonaStreamingSetupError(
+        `Daytona streaming setup failed while starting a session command in ${sessionId}. Run without output.onOutput or retry after Daytona session APIs are healthy.`,
+        error,
+      );
+    }
     const commandId = started.cmdId;
     if (!commandId) {
-      throw new Error("Daytona did not return a command id for the session.");
+      throw new DaytonaStreamingSetupError(
+        "Daytona streaming setup failed: session command did not return a command id.",
+      );
     }
     await sandbox.process.getSessionCommandLogs(
       sessionId,
       commandId,
       (chunk) => emitter.push("stdout", chunk),
       (chunk) => emitter.push("stderr", chunk),
+      args.timeout,
     );
     await emitter.flush();
     const command = await waitForSessionCommandExit(
@@ -1239,12 +1397,57 @@ async function waitForSessionCommandExit(
   }
 }
 
+async function withCommandDeadline<T>(
+  operation: Promise<T>,
+  timeoutSeconds: number | undefined,
+  label: string,
+) {
+  if (timeoutSeconds === undefined) {
+    return await operation;
+  }
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(
+        new DaytonaCommandTimeoutError(
+          `${label} timed out after ${timeoutSeconds} seconds.`,
+        ),
+      );
+    }, timeoutSeconds * 1000);
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+class DaytonaCommandTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DaytonaCommandTimeoutError";
+  }
+}
+
+class DaytonaStreamingSetupError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(
+      cause instanceof Error ? `${message} Cause: ${cause.message}` : message,
+      { cause },
+    );
+    this.name = "DaytonaStreamingSetupError";
+  }
+}
+
 function createStreamEmitter(
   ctx: { runMutation: (handle: any, args: any) => Promise<unknown> },
   args: {
     jobId?: string;
     lineBuffered: boolean;
     onOutput?: string;
+    redact: (content: string) => string;
     runId: string;
     sandboxId: string;
   },
@@ -1254,17 +1457,19 @@ function createStreamEmitter(
   const buffers = { stderr: "", stdout: "" };
   const output = { stderr: "", stdout: "" };
 
-  const emit = (stream: "stderr" | "stdout", content: string) => {
-    if (content.length === 0) {
+  const emit = (stream: "stderr" | "stdout", rawContent: string) => {
+    if (rawContent.length === 0) {
       return;
     }
+    const content = args.redact(rawContent);
+    const timestamp = Date.now();
     const payload = {
       content,
       runId: args.runId,
       sandboxId: args.sandboxId,
       sequence,
       stream,
-      timestamp: Date.now(),
+      timestamp,
     };
     sequence += 1;
     pending = pending.then(async () => {
@@ -1272,7 +1477,11 @@ function createStreamEmitter(
         await ctx.runMutation(internalApi.appendJobOutput, {
           content,
           jobId: args.jobId,
-          now: Date.now(),
+          now: timestamp,
+          runId: args.runId,
+          sandboxId: args.sandboxId,
+          sequence: payload.sequence,
+          stream,
         });
       }
       if (args.onOutput) {
@@ -1296,18 +1505,59 @@ function createStreamEmitter(
       await pending;
     },
     push: (stream: "stderr" | "stdout", chunk: string) => {
-      output[stream] += chunk;
+      const redactedChunk = args.redact(chunk);
+      output[stream] += redactedChunk;
       if (!args.lineBuffered) {
-        emit(stream, chunk);
+        emit(stream, redactedChunk);
         return;
       }
-      buffers[stream] += chunk;
+      buffers[stream] += redactedChunk;
       const lines = buffers[stream].split(/\r?\n/);
       buffers[stream] = lines.pop() ?? "";
       for (const line of lines) {
         emit(stream, `${line}\n`);
       }
     },
+  };
+}
+
+function compileRedactor(
+  redact:
+    | {
+        env?: string[];
+        patterns?: string[];
+        values?: string[];
+      }
+    | undefined,
+  env: Record<string, string> | undefined,
+) {
+  const values = [
+    ...(redact?.values ?? []),
+    ...(redact?.env ?? [])
+      .map((name) => env?.[name])
+      .filter((value): value is string => Boolean(value)),
+  ].filter((value) => value.length > 0);
+  const patterns = (redact?.patterns ?? []).map((pattern) => {
+    try {
+      return new RegExp(pattern, "g");
+    } catch (error) {
+      throw new Error(`Invalid Daytona output redaction pattern ${pattern}`, {
+        cause: error,
+      });
+    }
+  });
+  if (values.length === 0 && patterns.length === 0) {
+    return (content: string) => content;
+  }
+  return (content: string) => {
+    let redacted = content;
+    for (const value of values) {
+      redacted = redacted.split(value).join("[redacted]");
+    }
+    for (const pattern of patterns) {
+      redacted = redacted.replace(pattern, "[redacted]");
+    }
+    return redacted;
   };
 }
 
@@ -1518,7 +1768,7 @@ function normalizeExecuteResult(result: {
           }),
     exitCode: result.exitCode,
     result: result.result,
-    stderr: result.stderr,
+    stderr: result.stderr ?? "",
   });
 }
 
@@ -1615,7 +1865,7 @@ class DaytonaHttpClient {
     const toolboxBase = await this.toolboxBaseUrl(sandbox);
     const toolboxRequest = async <T>(
       path: string,
-      init: { body?: unknown; method?: string } = {},
+      init: { body?: unknown; method?: string; timeoutMs?: number } = {},
     ) => {
       return await this.request<T>(`${toolboxBase}${path}`, init);
     };
@@ -1637,6 +1887,7 @@ class DaytonaHttpClient {
               timeout,
             }),
             method: "POST",
+            timeoutMs: commandRequestTimeoutMs(timeout),
           });
           const result = response.result ?? "";
           return {
@@ -1663,6 +1914,7 @@ class DaytonaHttpClient {
             code?: number;
             exitCode?: number;
             result?: string;
+            stderr?: string;
           }>("/process/execute", {
             body: stripUndefined({
               command,
@@ -1671,6 +1923,7 @@ class DaytonaHttpClient {
               timeout,
             }),
             method: "POST",
+            timeoutMs: commandRequestTimeoutMs(timeout),
           });
           const result = response.result ?? "";
           return {
@@ -1680,6 +1933,7 @@ class DaytonaHttpClient {
             },
             exitCode: response.exitCode ?? response.code ?? 0,
             result,
+            stderr: response.stderr,
           };
         },
         executeSessionCommand: async (sessionId, request, timeout) => {
@@ -1691,6 +1945,7 @@ class DaytonaHttpClient {
           }>(`/process/session/${encodeURIComponent(sessionId)}/exec`, {
             body: stripUndefined({ ...request, timeout }),
             method: "POST",
+            timeoutMs: commandRequestTimeoutMs(timeout),
           });
         },
         getSessionCommand: async (sessionId, commandId) => {
@@ -1703,9 +1958,11 @@ class DaytonaHttpClient {
           commandId,
           onStdout,
           _onStderr,
+          timeout,
         ) => {
           const logs = await this.textRequest(
             `${toolboxBase}/process/session/${encodeURIComponent(sessionId)}/command/${encodeURIComponent(commandId)}/logs?follow=true`,
+            commandRequestTimeoutMs(timeout),
           );
           onStdout(logs);
         },
@@ -1736,13 +1993,34 @@ class DaytonaHttpClient {
 
   private async request<T>(
     url: string,
-    init: { body?: unknown; method?: string } = {},
+    init: { body?: unknown; method?: string; timeoutMs?: number } = {},
   ) {
-    const response = await fetch(url, {
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      headers: this.headers(init.body !== undefined),
-      method: init.method ?? "GET",
-    });
+    const controller =
+      init.timeoutMs === undefined ? undefined : new AbortController();
+    const timeoutId =
+      controller === undefined
+        ? undefined
+        : setTimeout(() => controller.abort(), init.timeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        headers: this.headers(init.body !== undefined),
+        method: init.method ?? "GET",
+        signal: controller?.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new DaytonaCommandTimeoutError(
+          `Daytona API request timed out after ${Math.round((init.timeoutMs ?? 0) / 1000)} seconds: ${url}`,
+        );
+      }
+      throw error;
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       throw new Error(
@@ -1752,14 +2030,46 @@ class DaytonaHttpClient {
     if (response.status === 204) {
       return undefined as T;
     }
-    return (await response.json()) as T;
+    const text = await response.text();
+    if (text.trim() === "") {
+      return undefined as T;
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch (error) {
+      throw new Error(
+        `Daytona API returned a non-JSON response from ${url}: ${text.slice(0, 500)}`,
+        { cause: error },
+      );
+    }
   }
 
-  private async textRequest(url: string) {
-    const response = await fetch(url, {
-      headers: this.headers(false, "text/plain"),
-      method: "GET",
-    });
+  private async textRequest(url: string, timeoutMs?: number) {
+    const controller =
+      timeoutMs === undefined ? undefined : new AbortController();
+    const timeoutId =
+      controller === undefined
+        ? undefined
+        : setTimeout(() => controller.abort(), timeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: this.headers(false, "text/plain"),
+        method: "GET",
+        signal: controller?.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new DaytonaCommandTimeoutError(
+          `Daytona API request timed out after ${Math.round((timeoutMs ?? 0) / 1000)} seconds: ${url}`,
+        );
+      }
+      throw error;
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
     if (!response.ok) {
       throw new Error(`Daytona API request failed: HTTP ${response.status}`);
     }
@@ -1777,6 +2087,18 @@ class DaytonaHttpClient {
       "x-daytona-source": "convex-component",
     });
   }
+}
+
+function commandRequestTimeoutMs(timeoutSeconds: number | undefined) {
+  return timeoutSeconds === undefined
+    ? undefined
+    : timeoutSeconds * 1000 + 5_000;
+}
+
+function isAbortError(error: unknown) {
+  return (
+    error instanceof DOMException && error.name === "AbortError"
+  ) || (error instanceof Error && error.name === "AbortError");
 }
 
 function buildSessionCommand(

@@ -103,6 +103,11 @@ export type DaytonaCommandOutputOptions = {
     DaytonaCommandOutput,
     unknown
   >;
+  redact?: {
+    env?: string[];
+    patterns?: string[];
+    values?: string[];
+  };
 };
 
 export type DaytonaCommandCapture = {
@@ -183,11 +188,27 @@ export type DaytonaJob = {
   error?: string;
   exitCode?: number;
   jobId: string;
-  output: string;
   sandboxId?: string;
   startedAt?: number;
   status: DaytonaJobStatus;
   updatedAt: number;
+};
+
+export type DaytonaJobOutput = {
+  content: string;
+  createdAt: number;
+  jobId: string;
+  outputId: string;
+  runId: string;
+  sandboxId: string;
+  sequence: number;
+  stream: "stdout" | "stderr";
+};
+
+export type DaytonaJobOutputPage = {
+  isDone: boolean;
+  nextSequence: number | null;
+  output: DaytonaJobOutput[];
 };
 
 export type DaytonaJobPage = {
@@ -215,6 +236,9 @@ export type DaytonaCleanupRun = {
   deleteOlderThan?: number;
   deleted: number;
   error?: string;
+  outputCursor?: string | null;
+  outputDeleted: number;
+  outputOlderThan?: number;
   processed: number;
   status: "running" | "succeeded" | "failed";
   updatedAt: number;
@@ -342,6 +366,25 @@ export type DaytonaBundledActionDefinition<
   returns?: ReturnsValidator;
 };
 
+export type DaytonaDurableActionDefinition<
+  ArgsValidator extends
+    | PropertyValidators
+    | Validator<any, "required", any>
+    | void,
+> = DaytonaActionRuntimeOptions & {
+  args?: ArgsValidator;
+  capture?: DaytonaCommandCapture;
+  cwd?: string;
+  files?: DaytonaStagedFile[];
+  output?: DaytonaCommandOutputOptions;
+  sandbox?: Omit<CreateSandboxOptions, "language">;
+  seedDownloadUrl?: string;
+  handler: (
+    ctx: DaytonaActionContext,
+    ...args: ArgsArrayForOptionalValidator<ArgsValidator>
+  ) => unknown | Promise<unknown>;
+};
+
 type ActionCtx = Pick<GenericActionCtx<GenericDataModel>, "runAction">;
 type CallbackActionCtx = Pick<
   GenericActionCtx<GenericDataModel>,
@@ -420,6 +463,20 @@ export class DaytonaRunner {
     return (await ctx.runQuery(this.component.lib.getJob, args as any)) as
       | DaytonaJob
       | null;
+  }
+
+  async listJobOutput(
+    ctx: QueryCtx,
+    args: {
+      afterSequence?: number;
+      jobId: string;
+      limit?: number;
+    },
+  ) {
+    return (await ctx.runQuery(
+      this.component.lib.listJobOutput,
+      args as any,
+    )) as DaytonaJobOutputPage;
   }
 
   async cancelJob(ctx: MutationCtx, args: { jobId: string }) {
@@ -618,6 +675,73 @@ export class DaytonaRunner {
   }
 
   /**
+   * Define a Convex action that starts a durable Daytona job and returns its
+   * job id immediately. The Daytona-side handler uses the same JavaScript
+   * runtime context as `defineAction`, while output is stored incrementally in
+   * the component's job output table.
+   */
+  defineDurableAction<
+    ArgsValidator extends
+      | PropertyValidators
+      | Validator<any, "required", any>
+      | void,
+    OneOrZeroArgs extends
+      ArgsArrayForOptionalValidator<ArgsValidator> = DefaultArgsForOptionalValidator<ArgsValidator>,
+  >(
+    definition: DaytonaDurableActionDefinition<ArgsValidator>,
+  ): RegisteredAction<
+    "public",
+    ArgsArrayToObject<OneOrZeroArgs>,
+    { jobId: string }
+  > {
+    return actionGeneric({
+      args: definition.args as any,
+      returns: undefined,
+      handler: async (ctx, actionArgs: unknown = {}) => {
+        const callback = await this.callback(ctx, definition);
+        const scriptPath = ".convex-daytona/durable-action.cjs";
+        return await this.startCommand(ctx, {
+          auth: definition.auth,
+          capture: definition.capture,
+          command: `node ${shellQuote(scriptPath)}`,
+          create: mergeCreate(definition.sandbox, {
+            ...definition.create,
+            language: "javascript",
+          }),
+          createTimeout: definition.createTimeout,
+          cwd: definition.cwd,
+          deleteSandboxAfter: definition.deleteSandboxAfter,
+          deleteTimeout: definition.deleteTimeout,
+          env: definition.env,
+          files: [
+            ...(definition.files ?? []),
+            {
+              path: scriptPath,
+              content: buildDaytonaDurableActionCode(
+                definition.handler as (
+                  ctx: DaytonaActionContext,
+                  ...args: any[]
+                ) => unknown,
+                actionArgs,
+                callback,
+              ),
+            },
+          ],
+          install: normalizeInstall(definition),
+          output: definition.output ?? { lineBuffered: true },
+          sandboxId: definition.sandboxId,
+          seedDownloadUrl: definition.seedDownloadUrl,
+          timeout: definition.timeout,
+        });
+      },
+    }) as RegisteredAction<
+      "public",
+      ArgsArrayToObject<OneOrZeroArgs>,
+      { jobId: string }
+    >;
+  }
+
+  /**
    * Define a Convex action whose implementation is a TypeScript module bundled
    * by `convex-daytona build`. This lets Daytona-side code import pure helpers
    * from the app's `convex/` directory while still calling Convex functions only
@@ -725,6 +849,7 @@ export class DaytonaRunner {
               args.output.onOutput === undefined
                 ? undefined
                 : await createFunctionHandle(args.output.onOutput),
+            redact: args.output.redact,
           };
     return {
       ...args,
@@ -846,6 +971,21 @@ function buildDaytonaActionCode(
   return buildDaytonaActionRuntimeCode({
     args,
     callback,
+    emitResult: true,
+    handlerExpression: `(${source})`,
+  });
+}
+
+function buildDaytonaDurableActionCode(
+  handler: (ctx: DaytonaActionContext, ...args: any[]) => unknown,
+  args: unknown,
+  callback: DaytonaSerializedCallbacks | undefined,
+) {
+  const source = handler.toString();
+  return buildDaytonaActionRuntimeCode({
+    args,
+    callback,
+    emitResult: false,
     handlerExpression: `(${source})`,
   });
 }
@@ -858,6 +998,7 @@ function buildDaytonaBundledActionCode(
   return buildDaytonaActionRuntimeCode({
     args,
     callback,
+    emitResult: true,
     handlerExpression: `
       await (async () => {
         const { pathToFileURL } = await import("node:url");
@@ -877,6 +1018,7 @@ function buildDaytonaBundledActionCode(
 function buildDaytonaActionRuntimeCode(args: {
   args: unknown;
   callback: DaytonaSerializedCallbacks | undefined;
+  emitResult: boolean;
   handlerExpression: string;
 }) {
   const payload = base64EncodeUtf8(
@@ -986,15 +1128,23 @@ function buildDaytonaActionRuntimeCode(args: {
     };
     const __handler = ${args.handlerExpression};
     const __value = await __handler(__ctx, __payload.args);
-    console.log(__marker + JSON.stringify({
+    ${
+      args.emitResult
+        ? `console.log(__marker + JSON.stringify({
       ok: true,
       value: __value === undefined ? null : __value,
-    }));
+    }));`
+        : `void __value;`
+    }
   } catch (error) {
-    console.log(__marker + JSON.stringify({
+    ${
+      args.emitResult
+        ? `console.log(__marker + JSON.stringify({
       ok: false,
       error: __serializeError(error),
-    }));
+    }));`
+        : `console.error(error instanceof Error && error.stack ? error.stack : String(error));`
+    }
     process.exitCode = 1;
   }
 })();

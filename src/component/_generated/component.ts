@@ -75,6 +75,11 @@ type DaytonaCommandSandbox = {
 type DaytonaCommandOutput = {
   lineBuffered?: boolean;
   onOutput?: string;
+  redact?: {
+    env?: string[];
+    patterns?: string[];
+    values?: string[];
+  };
 };
 
 type DaytonaCommandCapture = {
@@ -140,11 +145,27 @@ type DaytonaJob = {
   error?: string;
   exitCode?: number;
   jobId: string;
-  output: string;
   sandboxId?: string;
   startedAt?: number;
   status: "queued" | "running" | "succeeded" | "failed" | "canceled";
   updatedAt: number;
+};
+
+type DaytonaJobOutput = {
+  content: string;
+  createdAt: number;
+  jobId: string;
+  outputId: string;
+  runId: string;
+  sandboxId: string;
+  sequence: number;
+  stream: "stdout" | "stderr";
+};
+
+type DaytonaJobOutputPage = {
+  isDone: boolean;
+  nextSequence: number | null;
+  output: DaytonaJobOutput[];
 };
 
 type DaytonaJobPage = {
@@ -172,6 +193,9 @@ type DaytonaCleanupRun = {
   deleteOlderThan?: number;
   deleted: number;
   error?: string;
+  outputCursor?: string | null;
+  outputDeleted: number;
+  outputOlderThan?: number;
   processed: number;
   status: "running" | "succeeded" | "failed";
   updatedAt: number;
@@ -291,6 +315,17 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           status?: "queued" | "running" | "succeeded" | "failed" | "canceled";
         },
         DaytonaJobPage,
+        Name
+      >;
+      listJobOutput: FunctionReference<
+        "query",
+        "internal",
+        {
+          afterSequence?: number;
+          jobId: string;
+          limit?: number;
+        },
+        DaytonaJobOutputPage,
         Name
       >;
       cancelJobs: FunctionReference<

@@ -139,13 +139,13 @@ export default defineDaytonaHandler<{
 ```
 
 Run `npm run daytona:build`. The CLI bundles those modules and writes
-`convex/_generated/daytona/manifest.ts`. Then wire the generated bundle into a
+`convex/daytona/_generated/manifest.ts`. Then wire the generated bundle into a
 normal Convex action:
 
 ```ts
 import { DaytonaRunner } from "@convex-dev/daytona";
 import { v } from "convex/values";
-import { bundles } from "./_generated/daytona/manifest.js";
+import { bundles } from "./daytona/_generated/manifest.js";
 import { components, internal } from "./_generated/api.js";
 
 const daytona = new DaytonaRunner(components.daytona);
@@ -338,34 +338,59 @@ deletes only the current batch, records counters, and schedules the next page.
 are staged. `capture.uploadUrl` is a consumer-provided upload URL; generate it
 from your app when you want the archive in your own storage namespace.
 
-## Durable Jobs
+## Durable Daytona Actions
 
-Use `startCommand` when a command should keep running after the calling action
-returns. The component stores status and accumulated output in its own table.
+Use `defineDurableAction` when Daytona work should keep running after the
+calling action returns. It uses the same JavaScript handler shape as
+`defineAction`, but returns a component job id immediately. Output is stored as
+sequence-indexed rows, so UIs can fetch only new lines.
 
 ```ts
-export const startTests = action({
-  args: {},
-  handler: async (ctx) => {
-    return await daytona.startCommand(ctx, {
-      command: "npm test",
-      sandbox: { create: { image: "node:22" } },
-      files,
-      install: { command: "npm ci" },
-      output: { onOutput: internal.events.commandOutput },
-      capture: { path: "coverage", uploadUrl },
-    });
+export const runBuild = daytona.defineDurableAction({
+  args: { label: v.string() },
+  sandbox: { image: "node:22" },
+  packages: ["lodash"],
+  output: {
+    lineBuffered: true,
+    redact: {
+      env: ["OPENAI_API_KEY"],
+      patterns: ["dtn_[A-Za-z0-9_\\-]+"],
+    },
+  },
+  capture: { path: "coverage", uploadUrl },
+  handler: async (ctx, { label }) => {
+    const fs = ctx.require("node:fs") as typeof import("node:fs");
+    const lodash = ctx.require("lodash") as {
+      startCase(value: string): string;
+    };
+
+    fs.mkdirSync("coverage", { recursive: true });
+    for (let step = 1; step <= 30; step += 1) {
+      console.log("step " + step + "/30 for " + lodash.startCase(label));
+      fs.appendFileSync("coverage/report.txt", "completed step " + step + "\n");
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
   },
 });
 
-export const testStatus = query({
+export const buildStatus = query({
   args: { jobId: v.string() },
   handler: async (ctx, { jobId }) => {
     return await daytona.getJob(ctx, { jobId });
   },
 });
 
-export const cancelTests = mutation({
+export const buildOutput = query({
+  args: {
+    afterSequence: v.optional(v.number()),
+    jobId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await daytona.listJobOutput(ctx, args);
+  },
+});
+
+export const cancelBuild = mutation({
   args: { jobId: v.string() },
   handler: async (ctx, { jobId }) => {
     await daytona.cancelJob(ctx, { jobId });
@@ -376,6 +401,9 @@ export const cancelTests = mutation({
 Canceling a queued job prevents it from starting. Canceling a running job marks
 it canceled and preserves that state; use a short Daytona timeout or delete the
 sandbox from your app if you need hard process termination.
+
+`startCommand` is still available when you want a lower-level command-shaped
+durable job.
 
 You can still use the small forms:
 

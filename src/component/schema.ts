@@ -22,7 +22,6 @@ export default defineSchema({
     durationMs: v.optional(v.number()),
     error: v.optional(v.string()),
     exitCode: v.optional(v.number()),
-    output: v.string(),
     sandboxId: v.optional(v.string()),
     startedAt: v.optional(v.number()),
     status: v.union(
@@ -38,6 +37,17 @@ export default defineSchema({
     .index("by_status_updatedAt", ["status", "updatedAt"])
     .index("by_updatedAt", ["updatedAt"])
     .index("by_sandboxId", ["sandboxId"]),
+  jobOutputs: defineTable({
+    content: v.string(),
+    createdAt: v.number(),
+    jobId: v.id("jobs"),
+    runId: v.string(),
+    sandboxId: v.string(),
+    sequence: v.number(),
+    stream: v.union(v.literal("stdout"), v.literal("stderr")),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_job_sequence", ["jobId", "sequence"]),
   cleanupRuns: defineTable({
     batchSize: v.number(),
     cancelCursor: v.optional(v.union(v.string(), v.null())),
@@ -49,6 +59,9 @@ export default defineSchema({
     deleteOlderThan: v.optional(v.number()),
     deleted: v.number(),
     error: v.optional(v.string()),
+    outputCursor: v.optional(v.union(v.string(), v.null())),
+    outputDeleted: v.number(),
+    outputOlderThan: v.optional(v.number()),
     processed: v.number(),
     status: v.union(
       v.literal("running"),

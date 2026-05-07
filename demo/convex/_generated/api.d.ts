@@ -10,9 +10,9 @@
 
 import type * as bundled from "../bundled.js";
 import type * as daytona from "../daytona.js";
+import type * as daytona__generated_manifest from "../daytona/_generated/manifest.js";
 import type * as daytona_getStringLength from "../daytona/getStringLength.js";
 import type * as daytonaHelpers from "../daytonaHelpers.js";
-import type * as daytonaManifest from "../daytonaManifest.js";
 import type * as events from "../events.js";
 import type * as facts from "../facts.js";
 import type * as http from "../http.js";
@@ -27,9 +27,9 @@ import type {
 declare const fullApi: ApiFromModules<{
   bundled: typeof bundled;
   daytona: typeof daytona;
+  "daytona/_generated/manifest": typeof daytona__generated_manifest;
   "daytona/getStringLength": typeof daytona_getStringLength;
   daytonaHelpers: typeof daytonaHelpers;
-  daytonaManifest: typeof daytonaManifest;
   events: typeof events;
   facts: typeof facts;
   http: typeof http;

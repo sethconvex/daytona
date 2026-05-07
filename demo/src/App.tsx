@@ -25,7 +25,7 @@ export function App() {
   const analyzeText = useAction(api.daytona.analyzeText);
   const runBundledLength = useAction(api.bundled.getStringLength);
   const startDurableJob = useAction(api.daytona.startDurableJob);
-  const cancelJob = useMutation(api.jobs.cancel);
+  const cancelJob = useMutation(api.daytona.cancelDurableJob);
   const [text, setText] = useState("measure this string in daytona");
   const [label, setLabel] = useState("demo build");
   const [jobId, setJobId] = useState<string | null>(null);
@@ -33,27 +33,23 @@ export function App() {
   const [bundled, setBundled] = useState<BundledResult | null>(null);
   const [busy, setBusy] = useState<"analysis" | "bundled" | "job" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const job = useQuery(api.jobs.get, jobId ? { jobId: jobId as any } : "skip");
-  const events = useQuery(api.events.recentOutputEvents);
-  const artifacts = useQuery(api.events.artifacts);
+  const job = useQuery(api.daytona.durableJob, jobId ? { jobId } : "skip");
+  const outputPage = useQuery(
+    api.daytona.durableOutput,
+    jobId ? { jobId, limit: 200 } : "skip",
+  );
 
   const output = useMemo(() => {
-    if (job?.output) {
-      return job.output;
-    }
-    const recent = events ?? [];
-    return recent
-      .slice()
-      .reverse()
+    return (outputPage?.output ?? [])
       .map((event: { content: string }) => event.content)
       .join("");
-  }, [events, job?.output]);
+  }, [outputPage]);
 
   async function runAnalysis() {
     setBusy("analysis");
     setError(null);
     try {
-      setAnalysis(await analyzeText({ text }));
+      setAnalysis((await analyzeText({ text })) as AnalyzeResult);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -78,7 +74,7 @@ export function App() {
     setError(null);
     try {
       const result = await startDurableJob({ label });
-      setJobId(result.jobId);
+      setJobId((result as { jobId: string }).jobId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -162,7 +158,7 @@ export function App() {
             </button>
             <button
               className="secondary"
-              onClick={() => jobId && cancelJob({ jobId: jobId as any })}
+              onClick={() => jobId && cancelJob({ jobId })}
               disabled={!jobId || !job || isTerminal(job.status)}
             >
               <CircleStop size={16} />
@@ -176,16 +172,10 @@ export function App() {
           </div>
           <pre className="terminal">{output || "Output will appear here."}</pre>
           <div className="artifacts">
-            {(artifacts ?? []).map(
-              (artifact: {
-                _id: string;
-                path: string;
-                size: number;
-              }) => (
-              <span key={artifact._id}>
-                {artifact.path} · {Math.round(artifact.size / 1024)} KB
+            {job?.artifact && (
+              <span>
+                {job.artifact.path} · {Math.round(job.artifact.size / 1024)} KB
               </span>
-              ),
             )}
           </div>
         </article>

@@ -1,7 +1,7 @@
 import { DaytonaRunner } from "@convex-dev/daytona";
 import { componentsGeneric } from "convex/server";
 import { v } from "convex/values";
-import { bundles } from "./daytonaManifest.js";
+import { bundles } from "./daytona/_generated/manifest.js";
 
 const components = componentsGeneric();
 const daytona = new DaytonaRunner(components.daytona as any);

@@ -23,7 +23,7 @@ async function main() {
   const options = parseBuildArgs(args);
   const root = path.resolve(options.root);
   const convexDir = path.resolve(root, options.convexDir);
-  const outFile = path.resolve(convexDir, "_generated/daytona/manifest.ts");
+  const outFile = path.resolve(convexDir, "daytona/_generated/manifest.ts");
   const entries = await findEntries(convexDir);
 
   await fs.mkdir(path.dirname(outFile), { recursive: true });
