@@ -2170,6 +2170,7 @@ class SpritesHttpClient {
       body: { name },
       method: "POST",
     });
+    assertSpriteUsable(sprite, "created");
     return this.wrapSprite(sprite);
   }
 
@@ -2183,6 +2184,7 @@ class SpritesHttpClient {
     const sprite = await this.request<SpriteLike>(
       `/v1/sprites/${encodeURIComponent(sandboxId)}`,
     );
+    assertSpriteUsable(sprite, "loaded");
     return this.wrapSprite(sprite);
   }
 
@@ -2193,15 +2195,14 @@ class SpritesHttpClient {
       provider: "sprites",
       process: {
         codeRun: async (code, params, timeout) => {
-          const result = await this.execute(
-            sandbox.id,
-            "node",
-            ["-e", code, ...(params?.argv ?? [])],
-            {
-              env: params?.env,
-              timeout,
-            },
-          );
+          const result = await this.executeWithDiagnostics(sandbox.id, "node", [
+            "-e",
+            code,
+            ...(params?.argv ?? []),
+          ], {
+            env: params?.env,
+            timeout,
+          });
           return {
             artifacts: { stdout: result.stdout },
             exitCode: result.exitCode,
@@ -2213,11 +2214,16 @@ class SpritesHttpClient {
         },
         deleteSession: async () => undefined,
         executeCommand: async (command, cwd, env, timeout) => {
-          const result = await this.execute(sandbox.id, "bash", ["-lc", command], {
-            cwd,
-            env,
-            timeout,
-          });
+          const result = await this.executeWithDiagnostics(
+            sandbox.id,
+            "bash",
+            ["-lc", command],
+            {
+              cwd,
+              env,
+              timeout,
+            },
+          );
           return {
             artifacts: { stdout: result.stdout },
             exitCode: result.exitCode,
@@ -2267,6 +2273,50 @@ class SpritesHttpClient {
       },
     );
     return parseSpritesExecBytes(bytes);
+  }
+
+  private async executeWithDiagnostics(
+    spriteName: string,
+    path: string,
+    argv: string[],
+    options: {
+      cwd?: string;
+      env?: Record<string, string>;
+      timeout?: number;
+    } = {},
+  ) {
+    try {
+      const before = await this.safeGet(spriteName);
+      if (before) {
+        assertSpriteUsable(before, "before exec");
+      }
+      const result = await this.execute(spriteName, path, argv, options);
+      if (result.exitCode === 127 && result.stdout === "" && result.stderr === "") {
+        const after = await this.safeGet(spriteName);
+        throw new Error(
+          `Sprites command exited 127 without output.${after ? ` ${formatSpriteDiagnostic(after)}` : ""}`,
+        );
+      }
+      return result;
+    } catch (error) {
+      const sprite = await this.safeGet(spriteName);
+      throw new Error(
+        `Sprites exec failed for ${spriteName}.${sprite ? ` ${formatSpriteDiagnostic(sprite)}` : ""} Cause: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
+  }
+
+  private async safeGet(spriteName: string) {
+    try {
+      return await this.request<SpriteLike>(
+        `/v1/sprites/${encodeURIComponent(spriteName)}`,
+      );
+    } catch {
+      return undefined;
+    }
   }
 
   private async request<T>(
@@ -2339,12 +2389,51 @@ class SpritesHttpClient {
 
 type SpriteLike = {
   created_at?: string;
+  error?: unknown;
+  exit_code?: number;
+  failed_at?: string;
   id: string;
+  last_error?: unknown;
+  message?: string;
   name: string;
+  reason?: string;
   status?: string;
   updated_at?: string;
   url?: string;
 };
+
+function assertSpriteUsable(sprite: SpriteLike, phase: string) {
+  if (
+    sprite.status === "failed" ||
+    sprite.status === "destroyed" ||
+    sprite.status === "error"
+  ) {
+    throw new Error(`Sprites sprite ${phase} unusable. ${formatSpriteDiagnostic(sprite)}`);
+  }
+}
+
+function formatSpriteDiagnostic(sprite: SpriteLike) {
+  const details = stripUndefined({
+    error: stringifyDiagnostic(sprite.error),
+    exitCode: sprite.exit_code,
+    failedAt: sprite.failed_at,
+    id: sprite.id,
+    lastError: stringifyDiagnostic(sprite.last_error),
+    message: sprite.message,
+    name: sprite.name,
+    reason: sprite.reason,
+    status: sprite.status,
+    updatedAt: sprite.updated_at,
+  });
+  return `Sprite diagnostics: ${JSON.stringify(details)}`;
+}
+
+function stringifyDiagnostic(value: unknown) {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
 
 function summarizeSprite(sprite: SpriteLike): SandboxLike & {
   provider: "sprites";
