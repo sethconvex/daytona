@@ -86,6 +86,7 @@ type DaytonaCommandOutput = {
 };
 
 type DaytonaCommandCapture = {
+  maxBytes?: number;
   onArtifact?: string;
   path: string;
   uploadUrl?: string;

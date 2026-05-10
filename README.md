@@ -278,6 +278,7 @@ const result = await remote.runCommand(ctx, {
   },
   capture: {
     path: "coverage",
+    maxBytes: 512 * 1024 * 1024,
     uploadUrl,
     onArtifact: internal.events.artifactReady,
   },

@@ -116,6 +116,7 @@ export type RemoteCommandOutputOptions = {
 };
 
 export type RemoteCommandCapture = {
+  maxBytes?: number;
   onArtifact?: FunctionReference<
     "mutation",
     FunctionVisibility,

@@ -125,6 +125,7 @@ const executeResultValidator = v.object({
 });
 
 const captureValidator = v.object({
+  maxBytes: v.optional(v.number()),
   onArtifact: v.optional(v.string()),
   path: v.string(),
   uploadUrl: v.optional(v.string()),
@@ -1622,15 +1623,38 @@ async function captureArtifact(
   }
   let size = 0;
   let storageId;
+  const sizeResult = await sandbox.process.executeCommand(
+    `wc -c < ${shellQuote(archivePath)}`,
+  );
+  if (sizeResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to stat remote artifact archive: ${
+        sizeResult.result || sizeResult.stderr || "unknown error"
+      }`,
+    );
+  }
+  size = Number.parseInt(sizeResult.result.trim(), 10);
+  if (!Number.isFinite(size)) {
+    throw new Error(
+      `Failed to parse remote artifact size from: ${sizeResult.result}`,
+    );
+  }
+  if (capture.maxBytes !== undefined && size > capture.maxBytes) {
+    throw new Error(
+      `Remote artifact is too large: ${size} bytes exceeds maxBytes ${capture.maxBytes}.`,
+    );
+  }
   if (capture.uploadUrl) {
     const uploadResult = await sandbox.process.executeCommand(
       [
-        `size=$(wc -c < ${shellQuote(archivePath)})`,
         `curl -fsS -X PUT -H 'content-type: application/gzip' --data-binary @${shellQuote(archivePath)} "$DAYTONA_ARTIFACT_UPLOAD_URL"`,
-        `printf '\\nDAYTONA_ARTIFACT_SIZE=%s\\n' "$size"`,
+        `printf '\\nDAYTONA_ARTIFACT_SIZE=%s\\n' "$DAYTONA_ARTIFACT_SIZE"`,
       ].join(" && "),
       undefined,
-      { DAYTONA_ARTIFACT_UPLOAD_URL: capture.uploadUrl },
+      {
+        DAYTONA_ARTIFACT_SIZE: String(size),
+        DAYTONA_ARTIFACT_UPLOAD_URL: capture.uploadUrl,
+      },
     );
     if (uploadResult.exitCode !== 0) {
       throw new Error(
@@ -1639,11 +1663,6 @@ async function captureArtifact(
     }
     size = parseArtifactSize(uploadResult.result);
     storageId = parseStorageIdFromText(uploadResult.result);
-  } else {
-    const sizeResult = await sandbox.process.executeCommand(
-      `wc -c < ${shellQuote(archivePath)}`,
-    );
-    size = Number.parseInt(sizeResult.result.trim(), 10);
   }
   const artifact = stripUndefined({
     contentType: "application/gzip",
