@@ -1,12 +1,12 @@
-import { DaytonaRunner } from "@convex-dev/daytona";
+import { RemoteRunner } from "@convex-dev/remote-runner";
 import { componentsGeneric } from "convex/server";
 import { v } from "convex/values";
-import { bundles } from "./daytona/_generated/manifest.js";
+import { bundles } from "./remote/_generated/manifest.js";
 
 const components = componentsGeneric();
-const daytona = new DaytonaRunner(components.daytona as any);
+const remote = new RemoteRunner(components.remoteRunner as any);
 
-export const getStringLength = daytona.defineBundledAction({
+export const getStringLength = remote.defineBundledAction({
   args: { text: v.string() },
   bundle: bundles.getStringLength,
   sandbox: { image: "node:22" },

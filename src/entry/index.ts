@@ -5,24 +5,24 @@ import type {
   FunctionVisibility,
   OptionalRestArgs,
 } from "convex/server";
-import type { DaytonaExecResult } from "../client/index.js";
+import type { RemoteExecResult } from "../client/index.js";
 
 type AnyConvexFunction<
   Type extends FunctionType = FunctionType,
 > = FunctionReference<Type, FunctionVisibility, any, any>;
 
-type DaytonaFunctionMap<Type extends FunctionType> = Record<
+type RemoteFunctionMap<Type extends FunctionType> = Record<
   string,
   AnyConvexFunction<Type>
 >;
 
-type DaytonaCallableMap<Functions extends DaytonaFunctionMap<FunctionType>> = {
+type RemoteCallableMap<Functions extends RemoteFunctionMap<FunctionType>> = {
   [Name in keyof Functions]: (
     ...args: OptionalRestArgs<Functions[Name]>
   ) => Promise<Awaited<FunctionReturnType<Functions[Name]>>>;
 };
 
-type DefinedMap<Map> = Map extends DaytonaFunctionMap<FunctionType> ? Map : {};
+type DefinedMap<Map> = Map extends RemoteFunctionMap<FunctionType> ? Map : {};
 
 type FunctionAt<Map, Name extends string> = Map extends Record<Name, infer Ref>
   ? Ref extends AnyConvexFunction
@@ -30,16 +30,16 @@ type FunctionAt<Map, Name extends string> = Map extends Record<Name, infer Ref>
     : never
   : never;
 
-export type DaytonaHandlerSpec = {
-  actions?: DaytonaFunctionMap<"action">;
+export type RemoteHandlerSpec = {
+  actions?: RemoteFunctionMap<"action">;
   args?: Record<string, unknown>;
-  mutations?: DaytonaFunctionMap<"mutation">;
-  queries?: DaytonaFunctionMap<"query">;
+  mutations?: RemoteFunctionMap<"mutation">;
+  queries?: RemoteFunctionMap<"query">;
   returns?: unknown;
 };
 
-export type DaytonaHandlerContext<Spec extends DaytonaHandlerSpec> = {
-  actions: DaytonaCallableMap<DefinedMap<Spec["actions"]>>;
+export type RemoteHandlerContext<Spec extends RemoteHandlerSpec> = {
+  actions: RemoteCallableMap<DefinedMap<Spec["actions"]>>;
   exec: (
     command: string,
     options?: {
@@ -47,7 +47,7 @@ export type DaytonaHandlerContext<Spec extends DaytonaHandlerSpec> = {
       env?: Record<string, string>;
       timeoutMs?: number;
     },
-  ) => Promise<DaytonaExecResult>;
+  ) => Promise<RemoteExecResult>;
   fs: typeof import("node:fs/promises");
   runAction: <Name extends keyof DefinedMap<Spec["actions"]> & string>(
     name: Name,
@@ -65,42 +65,42 @@ export type DaytonaHandlerContext<Spec extends DaytonaHandlerSpec> = {
   ) => Promise<Awaited<FunctionReturnType<FunctionAt<DefinedMap<Spec["queries"]>, Name>>>>;
   env: Record<string, string | undefined>;
   require: (id: string) => unknown;
-  mutations: DaytonaCallableMap<DefinedMap<Spec["mutations"]>>;
-  queries: DaytonaCallableMap<DefinedMap<Spec["queries"]>>;
+  mutations: RemoteCallableMap<DefinedMap<Spec["mutations"]>>;
+  queries: RemoteCallableMap<DefinedMap<Spec["queries"]>>;
   __dirname: string;
   __filename: string;
 };
 
-export type DaytonaHandlerArgs<Spec extends DaytonaHandlerSpec> =
+export type RemoteHandlerArgs<Spec extends RemoteHandlerSpec> =
   Spec["args"] extends Record<string, unknown> ? Spec["args"] : Record<string, never>;
 
-export type DaytonaHandlerReturn<Spec extends DaytonaHandlerSpec> =
+export type RemoteHandlerReturn<Spec extends RemoteHandlerSpec> =
   Spec["returns"] extends undefined ? unknown : Spec["returns"];
 
-export type DaytonaHandler<Spec extends DaytonaHandlerSpec> = (
-  ctx: DaytonaHandlerContext<Spec>,
-  args: DaytonaHandlerArgs<Spec>,
-) => DaytonaHandlerReturn<Spec> | Promise<DaytonaHandlerReturn<Spec>>;
+export type RemoteHandler<Spec extends RemoteHandlerSpec> = (
+  ctx: RemoteHandlerContext<Spec>,
+  args: RemoteHandlerArgs<Spec>,
+) => RemoteHandlerReturn<Spec> | Promise<RemoteHandlerReturn<Spec>>;
 
-export function defineDaytonaHandler<Spec extends DaytonaHandlerSpec>(
-  handler: DaytonaHandler<Spec>,
+export function defineRemoteHandler<Spec extends RemoteHandlerSpec>(
+  handler: RemoteHandler<Spec>,
 ) {
   return handler;
 }
 
-export type InferDaytonaHandlerArgs<Handler> =
-  Handler extends DaytonaHandler<infer Spec> ? DaytonaHandlerArgs<Spec> : never;
+export type InferRemoteHandlerArgs<Handler> =
+  Handler extends RemoteHandler<infer Spec> ? RemoteHandlerArgs<Spec> : never;
 
-export type InferDaytonaHandlerReturn<Handler> =
-  Handler extends DaytonaHandler<infer Spec> ? DaytonaHandlerReturn<Spec> : never;
+export type InferRemoteHandlerReturn<Handler> =
+  Handler extends RemoteHandler<infer Spec> ? RemoteHandlerReturn<Spec> : never;
 
-export type DaytonaFunctionReferences<Spec extends DaytonaHandlerSpec> = {
+export type RemoteFunctionReferences<Spec extends RemoteHandlerSpec> = {
   actions?: Spec["actions"];
   mutations?: Spec["mutations"];
   queries?: Spec["queries"];
 };
 
-export type DaytonaBundle<
+export type RemoteBundle<
   Args extends Record<string, unknown> = Record<string, unknown>,
   Returns = unknown,
 > = {
@@ -111,7 +111,7 @@ export type DaytonaBundle<
     mode?: string;
     path: string;
   }>;
-  functions?: DaytonaFunctionReferences<DaytonaHandlerSpec>;
+  functions?: RemoteFunctionReferences<RemoteHandlerSpec>;
   name: string;
   packages?: string[];
   source?: string;
@@ -121,4 +121,21 @@ export type DaytonaBundle<
   };
 };
 
-export type DaytonaBundleManifest = Record<string, DaytonaBundle<any, any>>;
+export type RemoteBundleManifest = Record<string, RemoteBundle<any, any>>;
+
+export type DaytonaHandlerSpec = RemoteHandlerSpec;
+export type DaytonaHandlerContext<Spec extends RemoteHandlerSpec> =
+  RemoteHandlerContext<Spec>;
+export type DaytonaHandlerArgs<Spec extends RemoteHandlerSpec> =
+  RemoteHandlerArgs<Spec>;
+export type DaytonaHandlerReturn<Spec extends RemoteHandlerSpec> =
+  RemoteHandlerReturn<Spec>;
+export type DaytonaHandler<Spec extends RemoteHandlerSpec> = RemoteHandler<Spec>;
+export type DaytonaFunctionReferences<Spec extends RemoteHandlerSpec> =
+  RemoteFunctionReferences<Spec>;
+export type DaytonaBundle<
+  Args extends Record<string, unknown> = Record<string, unknown>,
+  Returns = unknown,
+> = RemoteBundle<Args, Returns>;
+export type DaytonaBundleManifest = RemoteBundleManifest;
+export const defineDaytonaHandler = defineRemoteHandler;

@@ -1,7 +1,7 @@
-import { defineDaytonaHandler } from "@convex-dev/daytona/entry";
-import { summarizeString } from "../daytonaHelpers.js";
+import { defineRemoteHandler } from "@convex-dev/remote-runner/entry";
+import { summarizeString } from "../remoteHelpers.js";
 
-export default defineDaytonaHandler<{
+export default defineRemoteHandler<{
   args: { text: string };
   returns: {
     filePreview: string;

@@ -14,9 +14,9 @@ import {
 } from "convex/server";
 import type { PropertyValidators, Validator } from "convex/values";
 import type { ComponentApi } from "../component/_generated/component.js";
-import type { DaytonaBundle } from "../entry/index.js";
+import type { RemoteBundle } from "../entry/index.js";
 
-export type DaytonaAuth = {
+export type RemoteAuth = {
   apiKey?: string;
   apiUrl?: string;
   jwtToken?: string;
@@ -62,14 +62,14 @@ export type CreateSandboxOptions = {
   volumes?: VolumeMount[];
 };
 
-export type DaytonaStagedFile = {
+export type RemoteStagedFile = {
   content: string;
   encoding?: "utf8" | "base64";
   mode?: string;
   path: string;
 };
 
-export type DaytonaCommandOutput = {
+export type RemoteCommandOutput = {
   content: string;
   runId: string;
   sandboxId: string;
@@ -78,7 +78,7 @@ export type DaytonaCommandOutput = {
   timestamp: number;
 };
 
-export type DaytonaCommandArtifact = {
+export type RemoteCommandArtifact = {
   contentType: string;
   path: string;
   size: number;
@@ -86,26 +86,26 @@ export type DaytonaCommandArtifact = {
   uploadUrl?: string;
 };
 
-export type DaytonaPackageInstall = {
+export type RemotePackageInstall = {
   command?: string;
   manager?: "npm" | "pnpm" | "yarn";
   packages?: string[];
 };
 
-export type DaytonaCommandSandbox = {
+export type RemoteCommandSandbox = {
   create?: CreateSandboxOptions;
   deleteAfter?: boolean;
-  files?: DaytonaStagedFile[];
+  files?: RemoteStagedFile[];
   id?: string;
   seedDownloadUrl?: string;
 };
 
-export type DaytonaCommandOutputOptions = {
+export type RemoteCommandOutputOptions = {
   lineBuffered?: boolean;
   onOutput?: FunctionReference<
     "mutation",
     FunctionVisibility,
-    DaytonaCommandOutput,
+    RemoteCommandOutput,
     unknown
   >;
   redact?: {
@@ -115,26 +115,26 @@ export type DaytonaCommandOutputOptions = {
   };
 };
 
-export type DaytonaCommandCapture = {
+export type RemoteCommandCapture = {
   onArtifact?: FunctionReference<
     "mutation",
     FunctionVisibility,
-    DaytonaCommandArtifact,
+    RemoteCommandArtifact,
     unknown
   >;
   path: string;
   uploadUrl?: string;
 };
 
-export type DaytonaCommandCallback = {
+export type RemoteCommandCallback = {
   envName?: string;
   secret?: "mint" | string;
 };
 
 export type RunCommandOptions = {
-  auth?: DaytonaAuth;
-  callback?: DaytonaCommandCallback;
-  capture?: DaytonaCommandCapture;
+  auth?: RemoteAuth;
+  callback?: RemoteCommandCallback;
+  capture?: RemoteCommandCapture;
   command: string;
   create?: CreateSandboxOptions;
   createTimeout?: number;
@@ -142,17 +142,17 @@ export type RunCommandOptions = {
   deleteSandboxAfter?: boolean;
   deleteTimeout?: number;
   env?: Record<string, string>;
-  files?: DaytonaStagedFile[];
-  install?: DaytonaPackageInstall;
-  output?: DaytonaCommandOutputOptions;
-  sandbox?: DaytonaCommandSandbox;
+  files?: RemoteStagedFile[];
+  install?: RemotePackageInstall;
+  output?: RemoteCommandOutputOptions;
+  sandbox?: RemoteCommandSandbox;
   sandboxId?: string;
   seedDownloadUrl?: string;
   timeout?: number;
 };
 
 export type RunCodeOptions = {
-  auth?: DaytonaAuth;
+  auth?: RemoteAuth;
   argv?: string[];
   code: string;
   create?: CreateSandboxOptions;
@@ -165,12 +165,12 @@ export type RunCodeOptions = {
   timeout?: number;
 };
 
-export type DaytonaActionOptions =
+export type RemoteActionOptions =
   | ({ kind: "command" } & RunCommandOptions)
   | ({ kind: "code" } & RunCodeOptions);
 
-export type DaytonaRunnerOptions = {
-  auth?: DaytonaAuth;
+export type RemoteRunnerOptions = {
+  auth?: RemoteAuth;
   callbackSecret?: string;
   callbackTtlMs?: number;
   callbackUrl?: string;
@@ -178,15 +178,15 @@ export type DaytonaRunnerOptions = {
   deleteSandboxAfter?: boolean;
 };
 
-export type DaytonaJobStatus =
+export type RemoteJobStatus =
   | "queued"
   | "running"
   | "succeeded"
   | "failed"
   | "canceled";
 
-export type DaytonaJob = {
-  artifact?: DaytonaCommandArtifact;
+export type RemoteJob = {
+  artifact?: RemoteCommandArtifact;
   completedAt?: number;
   createdAt: number;
   durationMs?: number;
@@ -195,11 +195,11 @@ export type DaytonaJob = {
   jobId: string;
   sandboxId?: string;
   startedAt?: number;
-  status: DaytonaJobStatus;
+  status: RemoteJobStatus;
   updatedAt: number;
 };
 
-export type DaytonaJobOutput = {
+export type RemoteJobOutput = {
   content: string;
   createdAt: number;
   jobId: string;
@@ -210,26 +210,26 @@ export type DaytonaJobOutput = {
   stream: "stdout" | "stderr";
 };
 
-export type DaytonaJobOutputPage = {
+export type RemoteJobOutputPage = {
   isDone: boolean;
   nextSequence: number | null;
-  output: DaytonaJobOutput[];
+  output: RemoteJobOutput[];
 };
 
-export type DaytonaJobPage = {
+export type RemoteJobPage = {
   isDone: boolean;
-  jobs: DaytonaJob[];
+  jobs: RemoteJob[];
   nextCursor: string | null;
 };
 
-export type DaytonaCancelJobsResult = {
+export type RemoteCancelJobsResult = {
   canceled: number;
   isDone: boolean;
   nextCursor: string | null;
   processed: number;
 };
 
-export type DaytonaCleanupRun = {
+export type RemoteCleanupRun = {
   batchSize: number;
   cancelCursor?: string | null;
   cancelOlderThan?: number;
@@ -249,19 +249,19 @@ export type DaytonaCleanupRun = {
   updatedAt: number;
 };
 
-type DaytonaCallableType = "query" | "mutation" | "action";
+type RemoteCallableType = "query" | "mutation" | "action";
 
-type DaytonaCallableReference<Type extends DaytonaCallableType> =
+type RemoteCallableReference<Type extends RemoteCallableType> =
   FunctionReference<Type, FunctionVisibility, any, any>;
 
-export type DaytonaActionFunctions = {
-  queries?: Record<string, DaytonaCallableReference<"query">>;
-  mutations?: Record<string, DaytonaCallableReference<"mutation">>;
-  actions?: Record<string, DaytonaCallableReference<"action">>;
+export type RemoteActionFunctions = {
+  queries?: Record<string, RemoteCallableReference<"query">>;
+  mutations?: Record<string, RemoteCallableReference<"mutation">>;
+  actions?: Record<string, RemoteCallableReference<"action">>;
 };
 
-export type DaytonaActionRuntimeOptions = {
-  auth?: DaytonaAuth;
+export type RemoteActionRuntimeOptions = {
+  auth?: RemoteAuth;
   callbackSecret?: string;
   callbackTtlMs?: number;
   callbackUrl?: string;
@@ -270,20 +270,20 @@ export type DaytonaActionRuntimeOptions = {
   deleteSandboxAfter?: boolean;
   deleteTimeout?: number;
   env?: Record<string, string>;
-  functions?: DaytonaActionFunctions;
-  install?: DaytonaPackageInstall;
+  functions?: RemoteActionFunctions;
+  install?: RemotePackageInstall;
   packages?: string[];
   sandboxId?: string;
   timeout?: number;
 };
 
-export type DaytonaExecResult = {
+export type RemoteExecResult = {
   exitCode: number;
   stderr: string;
   stdout: string;
 };
 
-export type DaytonaActionContext = {
+export type RemoteActionContext = {
   actions: Record<
     string,
     <Return = unknown>(args?: Record<string, unknown>) => Promise<Return>
@@ -295,7 +295,7 @@ export type DaytonaActionContext = {
       env?: Record<string, string>;
       timeoutMs?: number;
     },
-  ) => Promise<DaytonaExecResult>;
+  ) => Promise<RemoteExecResult>;
   fs: typeof import("node:fs/promises");
   runAction: <Return = unknown>(
     name: string,
@@ -323,7 +323,7 @@ export type DaytonaActionContext = {
   __filename: string;
 };
 
-export type DaytonaActionDefinition<
+export type RemoteActionDefinition<
   ArgsValidator extends
     | PropertyValidators
     | Validator<any, "required", any>
@@ -334,22 +334,22 @@ export type DaytonaActionDefinition<
     | void,
   ReturnValue,
   OneOrZeroArgs extends ArgsArrayForOptionalValidator<ArgsValidator>,
-  > = DaytonaActionRuntimeOptions & {
+  > = RemoteActionRuntimeOptions & {
     args?: ArgsValidator;
-    capture?: DaytonaCommandCapture;
+    capture?: RemoteCommandCapture;
     cwd?: string;
-    files?: DaytonaStagedFile[];
-    output?: DaytonaCommandOutputOptions;
+    files?: RemoteStagedFile[];
+    output?: RemoteCommandOutputOptions;
     sandbox?: Omit<CreateSandboxOptions, "language">;
     seedDownloadUrl?: string;
     returns?: ReturnsValidator;
     handler: (
-      ctx: DaytonaActionContext,
+      ctx: RemoteActionContext,
     ...args: OneOrZeroArgs
   ) => ReturnValue | Promise<ReturnValue>;
 };
 
-export type DaytonaBundledActionDefinition<
+export type RemoteBundledActionDefinition<
   ArgsValidator extends
     | PropertyValidators
     | Validator<any, "required", any>
@@ -359,33 +359,33 @@ export type DaytonaBundledActionDefinition<
     | Validator<any, "required", any>
     | void,
   ReturnValue,
-> = DaytonaActionRuntimeOptions & {
+> = RemoteActionRuntimeOptions & {
   args?: ArgsValidator;
-  bundle: DaytonaBundle<any, ReturnValue>;
-  capture?: DaytonaCommandCapture;
+  bundle: RemoteBundle<any, ReturnValue>;
+  capture?: RemoteCommandCapture;
   cwd?: string;
-  files?: DaytonaStagedFile[];
-  output?: DaytonaCommandOutputOptions;
+  files?: RemoteStagedFile[];
+  output?: RemoteCommandOutputOptions;
   sandbox?: Omit<CreateSandboxOptions, "language">;
   seedDownloadUrl?: string;
   returns?: ReturnsValidator;
 };
 
-export type DaytonaDurableActionDefinition<
+export type RemoteDurableActionDefinition<
   ArgsValidator extends
     | PropertyValidators
     | Validator<any, "required", any>
     | void,
-> = DaytonaActionRuntimeOptions & {
+> = RemoteActionRuntimeOptions & {
   args?: ArgsValidator;
-  capture?: DaytonaCommandCapture;
+  capture?: RemoteCommandCapture;
   cwd?: string;
-  files?: DaytonaStagedFile[];
-  output?: DaytonaCommandOutputOptions;
+  files?: RemoteStagedFile[];
+  output?: RemoteCommandOutputOptions;
   sandbox?: Omit<CreateSandboxOptions, "language">;
   seedDownloadUrl?: string;
   handler: (
-    ctx: DaytonaActionContext,
+    ctx: RemoteActionContext,
     ...args: ArgsArrayForOptionalValidator<ArgsValidator>
   ) => unknown | Promise<unknown>;
 };
@@ -398,22 +398,22 @@ type CallbackActionCtx = Pick<
 type QueryCtx = Pick<GenericActionCtx<GenericDataModel>, "runQuery">;
 type MutationCtx = Pick<GenericActionCtx<GenericDataModel>, "runMutation">;
 
-const DAYTONA_ACTION_RESULT_MARKER = "__CONVEX_DAYTONA_ACTION_RESULT__:";
+const REMOTE_ACTION_RESULT_MARKER = "__CONVEX_REMOTE_ACTION_RESULT__:";
 
-export class DaytonaRunner {
+export class RemoteRunner {
   constructor(
     public component: ComponentApi,
-    private options: DaytonaRunnerOptions = {},
+    private options: RemoteRunnerOptions = {},
   ) {}
 
   async createSandbox(
     ctx: ActionCtx,
     args: {
-      auth?: DaytonaAuth;
+      auth?: RemoteAuth;
       create?: CreateSandboxOptions;
       createTimeout?: number;
-      files?: DaytonaStagedFile[];
-      install?: DaytonaPackageInstall;
+      files?: RemoteStagedFile[];
+      install?: RemotePackageInstall;
       seedDownloadUrl?: string;
     } = {},
   ) {
@@ -429,7 +429,7 @@ export class DaytonaRunner {
 
   async deleteSandbox(
     ctx: ActionCtx,
-    args: { auth?: DaytonaAuth; sandboxId: string; timeout?: number },
+    args: { auth?: RemoteAuth; sandboxId: string; timeout?: number },
   ) {
     return await ctx.runAction(this.component.lib.deleteSandbox, {
       auth: this.auth(args.auth),
@@ -440,7 +440,7 @@ export class DaytonaRunner {
 
   async getSandbox(
     ctx: ActionCtx,
-    args: { auth?: DaytonaAuth; sandboxId: string },
+    args: { auth?: RemoteAuth; sandboxId: string },
   ) {
     return await ctx.runAction(this.component.lib.getSandbox, {
       auth: this.auth(args.auth),
@@ -466,7 +466,7 @@ export class DaytonaRunner {
 
   async getJob(ctx: QueryCtx, args: { jobId: string }) {
     return (await ctx.runQuery(this.component.lib.getJob, args as any)) as
-      | DaytonaJob
+      | RemoteJob
       | null;
   }
 
@@ -481,7 +481,7 @@ export class DaytonaRunner {
     return (await ctx.runQuery(
       this.component.lib.listJobOutput,
       args as any,
-    )) as DaytonaJobOutputPage;
+    )) as RemoteJobOutputPage;
   }
 
   async cancelJob(ctx: MutationCtx, args: { jobId: string }) {
@@ -493,11 +493,11 @@ export class DaytonaRunner {
     args: {
       cursor?: string | null;
       limit?: number;
-      status?: DaytonaJobStatus;
+      status?: RemoteJobStatus;
     } = {},
   ) {
     return (await ctx.runQuery(this.component.lib.listJobs, args as any)) as
-      DaytonaJobPage;
+      RemoteJobPage;
   }
 
   async cancelJobs(
@@ -506,13 +506,13 @@ export class DaytonaRunner {
       beforeUpdatedAt?: number;
       cursor?: string | null;
       limit?: number;
-      status?: DaytonaJobStatus;
+      status?: RemoteJobStatus;
     } = {},
   ) {
     return (await ctx.runMutation(
       this.component.lib.cancelJobs,
       args as any,
-    )) as DaytonaCancelJobsResult;
+    )) as RemoteCancelJobsResult;
   }
 
   async startCleanup(
@@ -544,7 +544,7 @@ export class DaytonaRunner {
 
   async getCleanup(ctx: QueryCtx, args: { cleanupId: string }) {
     return (await ctx.runQuery(this.component.lib.getCleanup, args as any)) as
-      | DaytonaCleanupRun
+      | RemoteCleanupRun
       | null;
   }
 
@@ -558,7 +558,7 @@ export class DaytonaRunner {
     });
   }
 
-  async runAction(ctx: ActionCtx, args: DaytonaActionOptions) {
+  async runAction(ctx: ActionCtx, args: RemoteActionOptions) {
     if (args.kind === "command") {
       const { kind: _kind, ...rest } = args;
       return await this.runCommand(ctx, rest);
@@ -568,7 +568,7 @@ export class DaytonaRunner {
   }
 
   /**
-   * Define a Convex action whose handler runs as JavaScript in a Daytona
+   * Define a Convex action whose handler runs as JavaScript in a Remote
    * sandbox. The handler must be self-contained: use globals, dynamic imports,
    * or `require`, and pass data through args/env instead of closing over app
    * variables.
@@ -586,7 +586,7 @@ export class DaytonaRunner {
     OneOrZeroArgs extends
       ArgsArrayForOptionalValidator<ArgsValidator> = DefaultArgsForOptionalValidator<ArgsValidator>,
   >(
-    definition: DaytonaActionDefinition<
+    definition: RemoteActionDefinition<
       ArgsValidator,
       ReturnsValidator,
       ReturnValue,
@@ -602,7 +602,7 @@ export class DaytonaRunner {
 
   /**
    * Define a Convex action whose handler runs in a Node.js process inside a
-   * Daytona sandbox.
+   * Remote sandbox.
    */
   defineAction<
     ArgsValidator extends
@@ -617,7 +617,7 @@ export class DaytonaRunner {
     OneOrZeroArgs extends
       ArgsArrayForOptionalValidator<ArgsValidator> = DefaultArgsForOptionalValidator<ArgsValidator>,
   >(
-    definition: DaytonaActionDefinition<
+    definition: RemoteActionDefinition<
       ArgsValidator,
       ReturnsValidator,
       ReturnValue,
@@ -633,7 +633,7 @@ export class DaytonaRunner {
       returns: definition.returns as any,
       handler: async (ctx, actionArgs: unknown = {}) => {
         const callback = await this.callback(ctx, definition);
-        const scriptPath = ".convex-daytona/action.cjs";
+        const scriptPath = ".convex-remote-runner/action.cjs";
         const result = await this.runCommand(ctx, {
           auth: definition.auth,
           capture: definition.capture,
@@ -651,9 +651,9 @@ export class DaytonaRunner {
             ...(definition.files ?? []),
             {
               path: scriptPath,
-              content: buildDaytonaActionCode(
+              content: buildRemoteActionCode(
                 definition.handler as (
-                  ctx: DaytonaActionContext,
+                  ctx: RemoteActionContext,
                   ...args: any[]
                 ) => unknown,
                 actionArgs,
@@ -667,7 +667,7 @@ export class DaytonaRunner {
           seedDownloadUrl: definition.seedDownloadUrl,
           timeout: definition.timeout,
         });
-        return parseDaytonaActionResult(
+        return parseRemoteActionResult(
           result.result.result,
           result.result.exitCode,
         );
@@ -680,8 +680,8 @@ export class DaytonaRunner {
   }
 
   /**
-   * Define a Convex action that starts a durable Daytona job and returns its
-   * job id immediately. The Daytona-side handler uses the same JavaScript
+   * Define a Convex action that starts a durable Remote job and returns its
+   * job id immediately. The Remote-side handler uses the same JavaScript
    * runtime context as `defineAction`, while output is stored incrementally in
    * the component's job output table.
    */
@@ -693,7 +693,7 @@ export class DaytonaRunner {
     OneOrZeroArgs extends
       ArgsArrayForOptionalValidator<ArgsValidator> = DefaultArgsForOptionalValidator<ArgsValidator>,
   >(
-    definition: DaytonaDurableActionDefinition<ArgsValidator>,
+    definition: RemoteDurableActionDefinition<ArgsValidator>,
   ): RegisteredAction<
     "public",
     ArgsArrayToObject<OneOrZeroArgs>,
@@ -704,7 +704,7 @@ export class DaytonaRunner {
       returns: undefined,
       handler: async (ctx, actionArgs: unknown = {}) => {
         const callback = await this.callback(ctx, definition);
-        const scriptPath = ".convex-daytona/durable-action.cjs";
+        const scriptPath = ".convex-remote-runner/durable-action.cjs";
         return await this.startCommand(ctx, {
           auth: definition.auth,
           capture: definition.capture,
@@ -722,9 +722,9 @@ export class DaytonaRunner {
             ...(definition.files ?? []),
             {
               path: scriptPath,
-              content: buildDaytonaDurableActionCode(
+              content: buildRemoteDurableActionCode(
                 definition.handler as (
-                  ctx: DaytonaActionContext,
+                  ctx: RemoteActionContext,
                   ...args: any[]
                 ) => unknown,
                 actionArgs,
@@ -748,7 +748,7 @@ export class DaytonaRunner {
 
   /**
    * Define a Convex action whose implementation is a TypeScript module bundled
-   * by `convex-daytona build`. This lets Daytona-side code import pure helpers
+   * by `convex-remote-runner build`. This lets Remote-side code import pure helpers
    * from the app's `convex/` directory while still calling Convex functions only
    * through the explicit functions map generated with the bundle.
    */
@@ -765,7 +765,7 @@ export class DaytonaRunner {
     OneOrZeroArgs extends
       ArgsArrayForOptionalValidator<ArgsValidator> = DefaultArgsForOptionalValidator<ArgsValidator>,
   >(
-    definition: DaytonaBundledActionDefinition<
+    definition: RemoteBundledActionDefinition<
       ArgsValidator,
       ReturnsValidator,
       ReturnValue
@@ -783,7 +783,7 @@ export class DaytonaRunner {
           ...definition,
           functions: definition.functions ?? definition.bundle.functions,
         });
-        const scriptPath = ".convex-daytona/runner.cjs";
+        const scriptPath = ".convex-remote-runner/runner.cjs";
         const result = await this.runCommand(ctx, {
           auth: definition.auth,
           capture: definition.capture,
@@ -802,7 +802,7 @@ export class DaytonaRunner {
             ...definition.bundle.files,
             {
               path: scriptPath,
-              content: buildDaytonaBundledActionCode(
+              content: buildRemoteBundledActionCode(
                 definition.bundle.entrypoint,
                 actionArgs,
                 callback,
@@ -821,7 +821,7 @@ export class DaytonaRunner {
           seedDownloadUrl: definition.seedDownloadUrl,
           timeout: definition.timeout,
         });
-        return parseDaytonaActionResult(
+        return parseRemoteActionResult(
           result.result.result,
           result.result.exitCode,
         );
@@ -873,7 +873,7 @@ export class DaytonaRunner {
     };
   }
 
-  private auth(overrides?: DaytonaAuth) {
+  private auth(overrides?: RemoteAuth) {
     const auth = stripUndefined({
       apiKey:
         overrides?.apiKey ??
@@ -895,7 +895,11 @@ export class DaytonaRunner {
       provider:
         overrides?.provider ??
         this.options.auth?.provider ??
-        envProvider(process.env.DAYTONA_PROVIDER ?? process.env.SANDBOX_PROVIDER),
+        envProvider(
+          process.env.REMOTE_RUNNER_PROVIDER ??
+            process.env.SANDBOX_PROVIDER ??
+            process.env.DAYTONA_PROVIDER,
+        ),
       spritesApiUrl:
         overrides?.spritesApiUrl ??
         this.options.auth?.spritesApiUrl ??
@@ -926,7 +930,7 @@ export class DaytonaRunner {
 
   private async callback(
     ctx: CallbackActionCtx,
-    args: DaytonaActionRuntimeOptions,
+    args: RemoteActionRuntimeOptions,
   ) {
     if (!hasFunctions(args.functions)) {
       return undefined;
@@ -935,27 +939,30 @@ export class DaytonaRunner {
     const explicitCallbackUrl =
       args.callbackUrl ??
       this.options.callbackUrl ??
+      process.env.REMOTE_RUNNER_CALLBACK_URL ??
       process.env.DAYTONA_CALLBACK_URL;
     const callbackUrl = explicitCallbackUrl ?? defaultCallbackUrl();
     const callbackSecret =
       args.callbackSecret ??
       this.options.callbackSecret ??
+      process.env.REMOTE_RUNNER_CALLBACK_SECRET ??
       process.env.DAYTONA_CALLBACK_SECRET ??
       crypto.randomUUID();
 
     if (!callbackUrl) {
       throw new Error(
-        "To use ctx.runQuery/runMutation/runAction from a Daytona action, mount @convex-dev/daytona with httpPrefix \"/daytona/\", set CONVEX_SITE_URL, or pass callbackUrl to DaytonaRunner.",
+        "To use ctx.runQuery/runMutation/runAction from a remote action, mount @convex-dev/remote-runner with httpPrefix \"/remote-runner/\", set CONVEX_SITE_URL, or pass callbackUrl to RemoteRunner.",
       );
     }
     if (
       explicitCallbackUrl !== undefined &&
       args.callbackSecret === undefined &&
       this.options.callbackSecret === undefined &&
+      process.env.REMOTE_RUNNER_CALLBACK_SECRET === undefined &&
       process.env.DAYTONA_CALLBACK_SECRET === undefined
     ) {
       throw new Error(
-        "Pass callbackSecret or set DAYTONA_CALLBACK_SECRET when using a custom callbackUrl.",
+        "Pass callbackSecret or set REMOTE_RUNNER_CALLBACK_SECRET when using a custom callbackUrl.",
       );
     }
 
@@ -976,7 +983,7 @@ export class DaytonaRunner {
   }
 }
 
-type DaytonaSerializedCallbacks = {
+type RemoteSerializedCallbacks = {
   functions: {
     actions: Record<string, string>;
     mutations: Record<string, string>;
@@ -986,13 +993,13 @@ type DaytonaSerializedCallbacks = {
   url: string;
 };
 
-function buildDaytonaActionCode(
-  handler: (ctx: DaytonaActionContext, ...args: any[]) => unknown,
+function buildRemoteActionCode(
+  handler: (ctx: RemoteActionContext, ...args: any[]) => unknown,
   args: unknown,
-  callback: DaytonaSerializedCallbacks | undefined,
+  callback: RemoteSerializedCallbacks | undefined,
 ) {
   const source = handler.toString();
-  return buildDaytonaActionRuntimeCode({
+  return buildRemoteActionRuntimeCode({
     args,
     callback,
     emitResult: true,
@@ -1000,13 +1007,13 @@ function buildDaytonaActionCode(
   });
 }
 
-function buildDaytonaDurableActionCode(
-  handler: (ctx: DaytonaActionContext, ...args: any[]) => unknown,
+function buildRemoteDurableActionCode(
+  handler: (ctx: RemoteActionContext, ...args: any[]) => unknown,
   args: unknown,
-  callback: DaytonaSerializedCallbacks | undefined,
+  callback: RemoteSerializedCallbacks | undefined,
 ) {
   const source = handler.toString();
-  return buildDaytonaActionRuntimeCode({
+  return buildRemoteActionRuntimeCode({
     args,
     callback,
     emitResult: false,
@@ -1014,12 +1021,12 @@ function buildDaytonaDurableActionCode(
   });
 }
 
-function buildDaytonaBundledActionCode(
+function buildRemoteBundledActionCode(
   entrypoint: string,
   args: unknown,
-  callback: DaytonaSerializedCallbacks | undefined,
+  callback: RemoteSerializedCallbacks | undefined,
 ) {
-  return buildDaytonaActionRuntimeCode({
+  return buildRemoteActionRuntimeCode({
     args,
     callback,
     emitResult: true,
@@ -1031,7 +1038,7 @@ function buildDaytonaBundledActionCode(
         const module = await import(entryUrl);
         const handler = module.default ?? module.handler;
         if (typeof handler !== "function") {
-          throw new Error("Daytona bundle " + ${JSON.stringify(entrypoint)} + " must export a default handler function.");
+          throw new Error("Remote bundle " + ${JSON.stringify(entrypoint)} + " must export a default handler function.");
         }
         return handler;
       })()
@@ -1039,9 +1046,9 @@ function buildDaytonaBundledActionCode(
   });
 }
 
-function buildDaytonaActionRuntimeCode(args: {
+function buildRemoteActionRuntimeCode(args: {
   args: unknown;
-  callback: DaytonaSerializedCallbacks | undefined;
+  callback: RemoteSerializedCallbacks | undefined;
   emitResult: boolean;
   handlerExpression: string;
 }) {
@@ -1050,7 +1057,7 @@ function buildDaytonaActionRuntimeCode(args: {
   );
   return `
 (async () => {
-  const __marker = ${JSON.stringify(DAYTONA_ACTION_RESULT_MARKER)};
+  const __marker = ${JSON.stringify(REMOTE_ACTION_RESULT_MARKER)};
   const __payload = JSON.parse(Buffer.from(${JSON.stringify(payload)}, "base64").toString("utf8"));
   const __serializeError = (error) => ({
     message: error instanceof Error ? error.message : String(error),
@@ -1060,7 +1067,7 @@ function buildDaytonaActionRuntimeCode(args: {
   const __callConvex = async (kind, name, args = {}) => {
     const callback = __payload.callback;
     if (!callback) {
-      throw new Error("No Daytona callback bridge is configured for this action.");
+      throw new Error("No Remote callback bridge is configured for this action.");
     }
     const collections = {
       action: callback.functions.actions,
@@ -1069,7 +1076,7 @@ function buildDaytonaActionRuntimeCode(args: {
     };
     const handle = collections[kind]?.[name];
     if (!handle) {
-      throw new Error("Daytona action cannot run " + kind + " '" + name + "'. Add it to the action's functions map.");
+      throw new Error("Remote action cannot run " + kind + " '" + name + "'. Add it to the action's functions map.");
     }
     const response = await fetch(callback.url, {
       method: "POST",
@@ -1098,9 +1105,9 @@ function buildDaytonaActionRuntimeCode(args: {
     const { createRequire } = await import("node:module");
     const { promisify } = await import("node:util");
     const execAsync = promisify(execCallback);
-    const require = createRequire(process.cwd() + "/daytona-action.js");
+    const require = createRequire(process.cwd() + "/remote-action.js");
     const __dirname = process.cwd();
-    const __filename = __dirname + "/daytona-action.js";
+    const __filename = __dirname + "/remote-action.js";
     const __makeConvexProxy = (kind) => {
       const callback = __payload.callback;
       const collections = {
@@ -1187,16 +1194,16 @@ function base64EncodeUtf8(value: string) {
   return btoa(binary);
 }
 
-function parseDaytonaActionResult(output: string, exitCode: number) {
-  const markerIndex = output.lastIndexOf(DAYTONA_ACTION_RESULT_MARKER);
+function parseRemoteActionResult(output: string, exitCode: number) {
+  const markerIndex = output.lastIndexOf(REMOTE_ACTION_RESULT_MARKER);
   if (markerIndex === -1) {
     throw new Error(
-      `Daytona action did not produce a result marker. Exit code: ${exitCode}. Output:\n${output}`,
+      `Remote action did not produce a result marker. Exit code: ${exitCode}. Output:\n${output}`,
     );
   }
 
   const afterMarker = output.slice(
-    markerIndex + DAYTONA_ACTION_RESULT_MARKER.length,
+    markerIndex + REMOTE_ACTION_RESULT_MARKER.length,
   );
   const [line] = afterMarker.split(/\r?\n/, 1);
   let payload: {
@@ -1208,7 +1215,7 @@ function parseDaytonaActionResult(output: string, exitCode: number) {
     payload = JSON.parse(line);
   } catch (error) {
     throw new Error(
-      `Daytona action produced an invalid result payload: ${line}`,
+      `Remote action produced an invalid result payload: ${line}`,
       { cause: error },
     );
   }
@@ -1216,9 +1223,9 @@ function parseDaytonaActionResult(output: string, exitCode: number) {
   if (!payload.ok) {
     const remoteError = payload.error;
     const message =
-      remoteError?.message ?? `Daytona action failed with exit code ${exitCode}`;
+      remoteError?.message ?? `Remote action failed with exit code ${exitCode}`;
     const error = new Error(message);
-    error.name = remoteError?.name ?? "DaytonaActionError";
+    error.name = remoteError?.name ?? "RemoteActionError";
     if (remoteError?.stack) {
       error.stack = remoteError.stack;
     }
@@ -1228,7 +1235,7 @@ function parseDaytonaActionResult(output: string, exitCode: number) {
   return payload.value ?? null;
 }
 
-function normalizeInstall(args: DaytonaActionRuntimeOptions) {
+function normalizeInstall(args: RemoteActionRuntimeOptions) {
   if (!args.packages?.length) {
     return args.install;
   }
@@ -1242,7 +1249,7 @@ function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-async function createFunctionHandleMaps(functions?: DaytonaActionFunctions) {
+async function createFunctionHandleMaps(functions?: RemoteActionFunctions) {
   return {
     actions: await createFunctionHandleMap(functions?.actions),
     mutations: await createFunctionHandleMap(functions?.mutations),
@@ -1250,8 +1257,8 @@ async function createFunctionHandleMaps(functions?: DaytonaActionFunctions) {
   };
 }
 
-async function createFunctionHandleMap<Type extends DaytonaCallableType>(
-  functions?: Record<string, DaytonaCallableReference<Type>>,
+async function createFunctionHandleMap<Type extends RemoteCallableType>(
+  functions?: Record<string, RemoteCallableReference<Type>>,
 ) {
   const entries = await Promise.all(
     Object.entries(functions ?? {}).map(async ([name, reference]) => [
@@ -1262,7 +1269,7 @@ async function createFunctionHandleMap<Type extends DaytonaCallableType>(
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
-function hasFunctions(functions?: DaytonaActionFunctions) {
+function hasFunctions(functions?: RemoteActionFunctions) {
   return (
     functions !== undefined &&
     (Object.keys(functions.queries ?? {}).length > 0 ||
@@ -1276,7 +1283,7 @@ function defaultCallbackUrl() {
   if (!siteUrl) {
     return undefined;
   }
-  return `${siteUrl.replace(/\/$/, "")}/daytona/callback`;
+  return `${siteUrl.replace(/\/$/, "")}/remote-runner/callback`;
 }
 
 function envProvider(value: string | undefined): SandboxProvider | undefined {
@@ -1286,11 +1293,11 @@ function envProvider(value: string | undefined): SandboxProvider | undefined {
   return undefined;
 }
 
-export type DaytonaCallbackOptions = {
+export type RemoteCallbackOptions = {
   secret?: string;
 };
 
-export function daytonaCallback(options: DaytonaCallbackOptions = {}) {
+export function remoteCallback(options: RemoteCallbackOptions = {}) {
   return async (
     ctx: Pick<
       GenericActionCtx<GenericDataModel>,
@@ -1298,12 +1305,15 @@ export function daytonaCallback(options: DaytonaCallbackOptions = {}) {
     >,
     request: Request,
   ) => {
-    const secret = options.secret ?? process.env.DAYTONA_CALLBACK_SECRET;
+    const secret =
+      options.secret ??
+      process.env.REMOTE_RUNNER_CALLBACK_SECRET ??
+      process.env.DAYTONA_CALLBACK_SECRET;
     if (!secret) {
       return jsonResponse(
         {
           ok: false,
-          error: { message: "DAYTONA_CALLBACK_SECRET is not configured." },
+          error: { message: "REMOTE_RUNNER_CALLBACK_SECRET is not configured." },
         },
         500,
       );
@@ -1318,7 +1328,7 @@ export function daytonaCallback(options: DaytonaCallbackOptions = {}) {
     let body: {
       args?: Record<string, unknown>;
       handle?: string;
-      kind?: DaytonaCallableType;
+      kind?: RemoteCallableType;
     };
     try {
       body = (await request.json()) as typeof body;
@@ -1378,6 +1388,65 @@ export function daytonaCallback(options: DaytonaCallbackOptions = {}) {
     }
   };
 }
+
+export type DaytonaAuth = RemoteAuth;
+export type DaytonaStagedFile = RemoteStagedFile;
+export type DaytonaCommandOutput = RemoteCommandOutput;
+export type DaytonaCommandArtifact = RemoteCommandArtifact;
+export type DaytonaPackageInstall = RemotePackageInstall;
+export type DaytonaCommandSandbox = RemoteCommandSandbox;
+export type DaytonaCommandOutputOptions = RemoteCommandOutputOptions;
+export type DaytonaCommandCapture = RemoteCommandCapture;
+export type DaytonaCommandCallback = RemoteCommandCallback;
+export type DaytonaActionOptions = RemoteActionOptions;
+export type DaytonaRunnerOptions = RemoteRunnerOptions;
+export type DaytonaJobStatus = RemoteJobStatus;
+export type DaytonaJob = RemoteJob;
+export type DaytonaJobOutput = RemoteJobOutput;
+export type DaytonaJobOutputPage = RemoteJobOutputPage;
+export type DaytonaJobPage = RemoteJobPage;
+export type DaytonaCancelJobsResult = RemoteCancelJobsResult;
+export type DaytonaCleanupRun = RemoteCleanupRun;
+export type DaytonaActionFunctions = RemoteActionFunctions;
+export type DaytonaActionRuntimeOptions = RemoteActionRuntimeOptions;
+export type DaytonaExecResult = RemoteExecResult;
+export type DaytonaActionContext = RemoteActionContext;
+export type DaytonaActionDefinition<
+  ArgsValidator extends
+    | PropertyValidators
+    | Validator<any, "required", any>
+    | void,
+  ReturnsValidator extends
+    | PropertyValidators
+    | Validator<any, "required", any>
+    | void,
+  ReturnValue,
+  OneOrZeroArgs extends ArgsArrayForOptionalValidator<ArgsValidator>,
+> = RemoteActionDefinition<
+  ArgsValidator,
+  ReturnsValidator,
+  ReturnValue,
+  OneOrZeroArgs
+>;
+export type DaytonaBundledActionDefinition<
+  ArgsValidator extends
+    | PropertyValidators
+    | Validator<any, "required", any>
+    | void,
+  ReturnsValidator extends
+    | PropertyValidators
+    | Validator<any, "required", any>
+    | void,
+  ReturnValue,
+> = RemoteBundledActionDefinition<ArgsValidator, ReturnsValidator, ReturnValue>;
+export type DaytonaDurableActionDefinition<
+  ArgsValidator extends
+    | PropertyValidators
+    | Validator<any, "required", any>
+    | void,
+> = RemoteDurableActionDefinition<ArgsValidator>;
+export const DaytonaRunner = RemoteRunner;
+export const daytonaCallback = remoteCallback;
 
 function jsonResponse(body: unknown, status: number) {
   return new Response(JSON.stringify(body), {

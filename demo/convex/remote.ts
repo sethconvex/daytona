@@ -1,4 +1,4 @@
-import { DaytonaRunner } from "@convex-dev/daytona";
+import { RemoteRunner } from "@convex-dev/remote-runner";
 import { anyApi, componentsGeneric } from "convex/server";
 import { v } from "convex/values";
 import { action, mutation, query } from "./_generated/server";
@@ -6,7 +6,7 @@ import { action, mutation, query } from "./_generated/server";
 const components = componentsGeneric();
 const internalApi = anyApi as any;
 
-const daytona = new DaytonaRunner(components.daytona as any, {
+const remote = new RemoteRunner(components.remoteRunner as any, {
   defaultCreate: {
     autoStopInterval: 15,
     ephemeral: true,
@@ -14,7 +14,7 @@ const daytona = new DaytonaRunner(components.daytona as any, {
   },
 });
 
-export const analyzeText = daytona.defineAction({
+export const analyzeText = remote.defineAction({
   args: { text: v.string() },
   sandbox: { image: "node:22" },
   packages: ["lodash"],
@@ -49,7 +49,7 @@ export const analyzeText = daytona.defineAction({
 export const checkCodeStorage = action({
   args: {},
   handler: async (ctx) => {
-    const result = await daytona.runCommand(ctx as any, {
+    const result = await remote.runCommand(ctx as any, {
       command:
         "set +e; curl -vkI --connect-timeout 8 --max-time 18 https://convex.code.storage 2>&1; echo EXIT:$?",
       create: { name: `code-storage-${Date.now()}` },
@@ -65,7 +65,7 @@ export const checkCodeStorage = action({
   },
 });
 
-export const startDurableJob = daytona.defineDurableAction({
+export const startDurableJob = remote.defineDurableAction({
   args: { label: v.string() },
   capture: { path: "artifacts" },
   output: {
@@ -100,7 +100,7 @@ export const startDurableJob = daytona.defineDurableAction({
 export const durableJob = query({
   args: { jobId: v.string() },
   handler: async (ctx, { jobId }) => {
-    return await daytona.getJob(ctx as any, { jobId });
+    return await remote.getJob(ctx as any, { jobId });
   },
 });
 
@@ -111,13 +111,13 @@ export const durableOutput = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await daytona.listJobOutput(ctx as any, args);
+    return await remote.listJobOutput(ctx as any, args);
   },
 });
 
 export const cancelDurableJob = mutation({
   args: { jobId: v.string() },
   handler: async (ctx, { jobId }) => {
-    await daytona.cancelJob(ctx as any, { jobId });
+    await remote.cancelJob(ctx as any, { jobId });
   },
 });

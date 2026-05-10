@@ -29,12 +29,12 @@ type CodeStorageResult = {
 };
 
 export function App() {
-  const analyzeText = useAction(api.daytona.analyzeText);
-  const checkCodeStorage = useAction(api.daytona.checkCodeStorage);
+  const analyzeText = useAction(api.remote.analyzeText);
+  const checkCodeStorage = useAction(api.remote.checkCodeStorage);
   const runBundledLength = useAction(api.bundled.getStringLength);
-  const startDurableJob = useAction(api.daytona.startDurableJob);
-  const cancelJob = useMutation(api.daytona.cancelDurableJob);
-  const [text, setText] = useState("measure this string in daytona");
+  const startDurableJob = useAction(api.remote.startDurableJob);
+  const cancelJob = useMutation(api.remote.cancelDurableJob);
+  const [text, setText] = useState("measure this string remotely");
   const [label, setLabel] = useState("demo build");
   const [jobId, setJobId] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
@@ -44,9 +44,9 @@ export function App() {
     "analysis" | "bundled" | "codeStorage" | "job" | null
   >(null);
   const [error, setError] = useState<string | null>(null);
-  const job = useQuery(api.daytona.durableJob, jobId ? { jobId } : "skip");
+  const job = useQuery(api.remote.durableJob, jobId ? { jobId } : "skip");
   const outputPage = useQuery(
-    api.daytona.durableOutput,
+    api.remote.durableOutput,
     jobId ? { jobId, limit: 200 } : "skip",
   );
 
@@ -110,11 +110,11 @@ export function App() {
       <section className="intro">
         <div>
           <p className="eyebrow">Convex component demo</p>
-          <h1>Run Convex work in Daytona</h1>
+          <h1>Run Convex work in a remote sandbox</h1>
         </div>
         <div className="status">
           <Boxes size={18} />
-          <span>@convex-dev/daytona</span>
+          <span>@convex-dev/remote-runner</span>
         </div>
       </section>
 
@@ -124,7 +124,7 @@ export function App() {
         <article className="panel">
           <div className="panelHeader">
             <Package size={18} />
-            <h2>get string length in Daytona</h2>
+            <h2>get string length in a remote sandbox</h2>
           </div>
           <CodeBlock code={defineActionExample} />
           <textarea
@@ -136,7 +136,7 @@ export function App() {
           />
           <button onClick={runAnalysis} disabled={busy !== null}>
             <Play size={16} />
-            Run in Daytona
+            Run in a remote sandbox
           </button>
           <ResultCard analysis={analysis} loading={busy === "analysis"} />
         </article>
@@ -236,7 +236,7 @@ function BundledResultCard({
   loading: boolean;
 }) {
   if (loading) {
-    return <div className="result">Staging generated bundle in Daytona...</div>;
+    return <div className="result">Staging generated bundle in a remote sandbox...</div>;
   }
   if (!result) {
     return <div className="result muted">Run this to test the package component API.</div>;
@@ -281,10 +281,10 @@ function ResultCard({
   loading: boolean;
 }) {
   if (loading) {
-    return <div className="result">Installing lodash and running in Daytona...</div>;
+    return <div className="result">Installing lodash and running in a remote sandbox...</div>;
   }
   if (!analysis) {
-    return <div className="result muted">Run this to see a Daytona result.</div>;
+    return <div className="result muted">Run this to see a remote result.</div>;
   }
   return (
     <div className="result">
@@ -362,7 +362,7 @@ function highlight(code: string) {
   return parts;
 }
 
-const defineActionExample = `export const analyzeText = daytona.defineAction({
+const defineActionExample = `export const analyzeText = remote.defineAction({
   sandbox: { image: "node:22" },
   packages: ["lodash"],
   functions: {
@@ -385,10 +385,10 @@ const defineActionExample = `export const analyzeText = daytona.defineAction({
   },
 });`;
 
-const bundledActionExample = `// convex/daytona/getStringLength.ts
-import { summarizeString } from "../daytonaHelpers";
+const bundledActionExample = `// convex/remote/getStringLength.ts
+import { summarizeString } from "../remoteHelpers";
 
-export default defineDaytonaHandler<{
+export default defineRemoteHandler<{
   args: { text: string };
 }>(async (ctx, { text }) => {
   await ctx.fs.writeFile("input.txt", text);
@@ -406,7 +406,7 @@ export default defineDaytonaHandler<{
   };
 });
 
-// convex/daytonaHelpers.ts
+// convex/remoteHelpers.ts
 export function summarizeString(text: string) {
   const words = text.trim() === ""
     ? []
@@ -420,12 +420,12 @@ export function summarizeString(text: string) {
 }
 
 // convex/bundled.ts
-export const getStringLength = daytona.defineBundledAction({
+export const getStringLength = remote.defineBundledAction({
   bundle: bundles.getStringLength,
   sandbox: { image: "node:22" },
 });`;
 
-const durableJobExample = `export const runBuild = daytona.defineDurableAction({
+const durableJobExample = `export const runBuild = remote.defineDurableAction({
   sandbox: { image: "node:22" },
   packages: ["lodash"],
   handler: async (ctx, { label }) => {
@@ -443,14 +443,14 @@ const durableJobExample = `export const runBuild = daytona.defineDurableAction({
 });`;
 
 const spritesProviderExample = `// Same component API, different provider.
-const daytona = new DaytonaRunner(components.daytona, {
+const remote = new RemoteRunner(components.remoteRunner, {
   auth: {
     provider: "sprites",
     spritesToken: process.env.SPRITES_TOKEN,
   },
 });
 
-await daytona.runCommand(ctx, {
+await remote.runCommand(ctx, {
   command: "curl -vkI https://convex.code.storage",
   timeout: 30,
 });`;

@@ -421,7 +421,7 @@ export const runCommand = action({
       result = await withCommandDeadline(
         commandOperation,
         spec.timeout,
-        "Daytona command",
+        "Remote command",
       );
       artifact =
         spec.capture === undefined
@@ -795,7 +795,7 @@ export const runJob = internalAction({
           timeout: spec.timeout,
         }),
         spec.timeout,
-        "Durable Daytona command",
+        "Durable remote command",
       );
       const artifact =
         spec.capture === undefined
@@ -1229,7 +1229,7 @@ async function seedSandbox(
   );
   if (result.exitCode !== 0) {
     throw new Error(
-      `Failed to seed Daytona sandbox: ${result.result || "unknown error"}`,
+      `Failed to seed remote sandbox: ${result.result || "unknown error"}`,
     );
   }
 }
@@ -1431,7 +1431,7 @@ async function waitForSessionCommandExit(
       return command;
     }
     if (deadline !== undefined && Date.now() > deadline) {
-      throw new Error(`Daytona command ${commandId} timed out.`);
+      throw new Error(`Remote command ${commandId} timed out.`);
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -1449,7 +1449,7 @@ async function withCommandDeadline<T>(
   const timeout = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(() => {
       reject(
-        new DaytonaCommandTimeoutError(
+        new RemoteCommandTimeoutError(
           `${label} timed out after ${timeoutSeconds} seconds.`,
         ),
       );
@@ -1464,10 +1464,10 @@ async function withCommandDeadline<T>(
   }
 }
 
-class DaytonaCommandTimeoutError extends Error {
+class RemoteCommandTimeoutError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "DaytonaCommandTimeoutError";
+    this.name = "RemoteCommandTimeoutError";
   }
 }
 
@@ -1581,7 +1581,7 @@ function compileRedactor(
     try {
       return new RegExp(pattern, "g");
     } catch (error) {
-      throw new Error(`Invalid Daytona output redaction pattern ${pattern}`, {
+      throw new Error(`Invalid remote output redaction pattern ${pattern}`, {
         cause: error,
       });
     }
@@ -1634,7 +1634,7 @@ async function captureArtifact(
     );
     if (uploadResult.exitCode !== 0) {
       throw new Error(
-        `Failed to upload Daytona artifact: ${uploadResult.result || "unknown error"}`,
+        `Failed to upload remote artifact: ${uploadResult.result || "unknown error"}`,
       );
     }
     size = parseArtifactSize(uploadResult.result);
@@ -1696,7 +1696,7 @@ function addCallbackSecret(
   }
   return {
     ...env,
-    [callback?.envName ?? "DAYTONA_CALLBACK_SECRET"]: secret,
+    [callback?.envName ?? "REMOTE_RUNNER_CALLBACK_SECRET"]: secret,
   };
 }
 
@@ -2059,7 +2059,7 @@ class DaytonaHttpClient {
       });
     } catch (error) {
       if (isAbortError(error)) {
-        throw new DaytonaCommandTimeoutError(
+        throw new RemoteCommandTimeoutError(
           `Daytona API request timed out after ${Math.round((init.timeoutMs ?? 0) / 1000)} seconds: ${url}`,
         );
       }
@@ -2108,7 +2108,7 @@ class DaytonaHttpClient {
       });
     } catch (error) {
       if (isAbortError(error)) {
-        throw new DaytonaCommandTimeoutError(
+        throw new RemoteCommandTimeoutError(
           `Daytona API request timed out after ${Math.round((timeoutMs ?? 0) / 1000)} seconds: ${url}`,
         );
       }
@@ -2359,7 +2359,7 @@ class SpritesHttpClient {
       });
     } catch (error) {
       if (isAbortError(error)) {
-        throw new DaytonaCommandTimeoutError(
+        throw new RemoteCommandTimeoutError(
           `Sprites API request timed out after ${Math.round((init.timeoutMs ?? 0) / 1000)} seconds.`,
         );
       }

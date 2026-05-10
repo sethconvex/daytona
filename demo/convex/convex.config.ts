@@ -1,7 +1,7 @@
-import daytona from "@convex-dev/daytona/convex.config.js";
+import remoteRunner from "@convex-dev/remote-runner/convex.config.js";
 import { defineApp } from "convex/server";
 
 const app = defineApp();
-app.use(daytona, { httpPrefix: "/daytona/" });
+app.use(remoteRunner, { httpPrefix: "/remote-runner/" });
 
 export default app;

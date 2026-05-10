@@ -23,20 +23,20 @@ async function main() {
   const options = parseBuildArgs(args);
   const root = path.resolve(options.root);
   const convexDir = path.resolve(root, options.convexDir);
-  const outFile = path.resolve(convexDir, "daytona/_generated/manifest.ts");
+  const outFile = path.resolve(convexDir, "remote/_generated/manifest.ts");
   const entries = await findEntries(convexDir);
 
   await fs.mkdir(path.dirname(outFile), { recursive: true });
   if (entries.length === 0) {
     await fs.writeFile(outFile, renderManifest([]));
-    console.log(`convex-daytona: wrote empty manifest to ${relative(root, outFile)}`);
+    console.log(`convex-remote-runner: wrote empty manifest to ${relative(root, outFile)}`);
     return;
   }
 
   const bundles = [];
   for (const entry of entries) {
     const name = bundleName(convexDir, entry);
-    const entrypoint = `.convex-daytona/${name}.mjs`;
+    const entrypoint = `.convex-remote-runner/${name}.mjs`;
     const result = await build({
       absWorkingDir: root,
       bundle: true,
@@ -47,7 +47,7 @@ async function main() {
       sourcemap: "inline",
       target: "node22",
       write: false,
-      plugins: [daytonaValidationPlugin(convexDir)],
+      plugins: [remoteRunnerValidationPlugin(convexDir)],
     });
     const output = result.outputFiles[0]?.text;
     if (output === undefined) {
@@ -63,12 +63,12 @@ async function main() {
 
   await fs.writeFile(outFile, renderManifest(bundles));
   console.log(
-    `convex-daytona: bundled ${bundles.length} action${bundles.length === 1 ? "" : "s"} into ${relative(root, outFile)}`,
+    `convex-remote-runner: bundled ${bundles.length} action${bundles.length === 1 ? "" : "s"} into ${relative(root, outFile)}`,
   );
 }
 
 function usage() {
-  console.error(`Usage: convex-daytona build [--root .] [--convex-dir convex]`);
+  console.error(`Usage: convex-remote-runner build [--root .] [--convex-dir convex]`);
 }
 
 function parseBuildArgs(args: string[]) {
@@ -98,13 +98,21 @@ function requiredValue(args: string[], index: number, flag: string) {
 }
 
 async function findEntries(convexDir: string) {
-  const daytonaDir = path.join(convexDir, "daytona");
+  const remoteDir = path.join(convexDir, "remote");
+  const legacyDaytonaDir = path.join(convexDir, "daytona");
   const entries: string[] = [];
-  await walk(daytonaDir, entries).catch((error) => {
+  await walk(remoteDir, entries).catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
     }
   });
+  if (entries.length === 0) {
+    await walk(legacyDaytonaDir, entries).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    });
+  }
   entries.sort();
   return entries.filter(
     (entry) =>
@@ -132,22 +140,22 @@ async function walk(dir: string, entries: string[]) {
   }
 }
 
-function daytonaValidationPlugin(convexDir: string): Plugin {
+function remoteRunnerValidationPlugin(convexDir: string): Plugin {
   return {
-    name: "convex-daytona-validation",
+    name: "convex-remote-runner-validation",
     setup(buildApi) {
       buildApi.onResolve(
-        { filter: /^@convex-dev\/daytona\/entry$/ },
+        { filter: /^@convex-dev\/(?:remote-runner|daytona)\/entry$/ },
         () => ({
-          namespace: "convex-daytona-entry",
+          namespace: "convex-remote-runner-entry",
           path: "entry",
         }),
       );
       buildApi.onLoad(
-        { filter: /.*/, namespace: "convex-daytona-entry" },
+        { filter: /.*/, namespace: "convex-remote-runner-entry" },
         () => ({
           contents:
-            "export function defineDaytonaHandler(handler) { return handler; }",
+            "export function defineRemoteHandler(handler) { return handler; }",
           loader: "js",
         }),
       );
@@ -157,7 +165,7 @@ function daytonaValidationPlugin(convexDir: string): Plugin {
           return {
             errors: [
               {
-                text: `Daytona action modules cannot import '${specifier}'. Call Convex through ctx.queries, ctx.mutations, and ctx.actions instead.`,
+                text: `Remote action modules cannot import '${specifier}'. Call Convex through ctx.queries, ctx.mutations, and ctx.actions instead.`,
               },
             ],
           };
@@ -171,7 +179,7 @@ function daytonaValidationPlugin(convexDir: string): Plugin {
           return {
             errors: [
               {
-                text: `Daytona action modules cannot runtime-import '${specifier}'. Use type-only imports for FunctionReference types, then pass function handles to defineBundledAction.`,
+                text: `Remote action modules cannot runtime-import '${specifier}'. Use type-only imports for FunctionReference types, then pass function handles to defineBundledAction.`,
               },
             ],
           };
@@ -183,7 +191,7 @@ function daytonaValidationPlugin(convexDir: string): Plugin {
             return {
               errors: [
                 {
-                  text: `Daytona action modules can only import local files from the Convex directory. '${specifier}' escapes ${convexDir}.`,
+                  text: `Remote action modules can only import local files from the Convex directory. '${specifier}' escapes ${convexDir}.`,
                 },
               ],
             };
@@ -196,7 +204,10 @@ function daytonaValidationPlugin(convexDir: string): Plugin {
 }
 
 function bundleName(convexDir: string, entry: string) {
-  const parsed = path.parse(path.relative(path.join(convexDir, "daytona"), entry));
+  const rootDir = entry.includes(`${path.sep}remote${path.sep}`)
+    ? path.join(convexDir, "remote")
+    : path.join(convexDir, "daytona");
+  const parsed = path.parse(path.relative(rootDir, entry));
   const withoutExt = path.join(parsed.dir, parsed.name);
   return withoutExt.split(path.sep).join("_").replace(/[^A-Za-z0-9_$]/g, "_");
 }
@@ -224,12 +235,12 @@ function renderManifest(
   },`,
     )
     .join("\n");
-  return `// Generated by convex-daytona build. Do not edit.
-import type { DaytonaBundleManifest } from "@convex-dev/daytona/entry";
+  return `// Generated by convex-remote-runner build. Do not edit.
+import type { RemoteBundleManifest } from "@convex-dev/remote-runner/entry";
 
 export const bundles = {
 ${entries}
-} satisfies DaytonaBundleManifest;
+} satisfies RemoteBundleManifest;
 `;
 }
 

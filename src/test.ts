@@ -9,7 +9,7 @@ declare global {
 
 const modules = import.meta.glob("./component/**/*.ts");
 
-export function register(t: TestConvex<any>, name = "daytona") {
+export function register(t: TestConvex<any>, name = "remoteRunner") {
   t.registerComponent(name, schema, modules);
 }
 

@@ -9,14 +9,14 @@
  */
 
 import type * as bundled from "../bundled.js";
-import type * as daytona from "../daytona.js";
-import type * as daytona__generated_manifest from "../daytona/_generated/manifest.js";
-import type * as daytona_getStringLength from "../daytona/getStringLength.js";
-import type * as daytonaHelpers from "../daytonaHelpers.js";
 import type * as events from "../events.js";
 import type * as facts from "../facts.js";
 import type * as http from "../http.js";
 import type * as jobs from "../jobs.js";
+import type * as remote from "../remote.js";
+import type * as remote__generated_manifest from "../remote/_generated/manifest.js";
+import type * as remote_getStringLength from "../remote/getStringLength.js";
+import type * as remoteHelpers from "../remoteHelpers.js";
 
 import type {
   ApiFromModules,
@@ -26,14 +26,14 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   bundled: typeof bundled;
-  daytona: typeof daytona;
-  "daytona/_generated/manifest": typeof daytona__generated_manifest;
-  "daytona/getStringLength": typeof daytona_getStringLength;
-  daytonaHelpers: typeof daytonaHelpers;
   events: typeof events;
   facts: typeof facts;
   http: typeof http;
   jobs: typeof jobs;
+  remote: typeof remote;
+  "remote/_generated/manifest": typeof remote__generated_manifest;
+  "remote/getStringLength": typeof remote_getStringLength;
+  remoteHelpers: typeof remoteHelpers;
 }>;
 
 /**
@@ -63,5 +63,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  daytona: import("@convex-dev/daytona/_generated/component.js").ComponentApi<"daytona">;
+  remoteRunner: import("@convex-dev/remote-runner/_generated/component.js").ComponentApi<"remoteRunner">;
 };

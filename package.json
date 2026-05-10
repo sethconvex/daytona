@@ -1,13 +1,14 @@
 {
-  "name": "@convex-dev/daytona",
-  "description": "A Convex component for running action work in Daytona sandboxes.",
+  "name": "@convex-dev/remote-runner",
+  "description": "A Convex component for running action work in remote sandboxes.",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": [
     "convex",
     "component",
-    "daytona",
+    "remote-runner",
+    "remote-execution",
     "sandbox",
     "actions"
   ],
@@ -28,6 +29,7 @@
     "src"
   ],
   "bin": {
+    "convex-remote-runner": "./dist/cli/index.js",
     "convex-daytona": "./dist/cli/index.js"
   },
   "exports": {

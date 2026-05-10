@@ -1,15 +1,16 @@
 {
-  "name": "daytona-convex-demo",
+  "name": "remote-runner-convex-demo",
   "private": true,
   "type": "module",
   "scripts": {
-    "daytona:build": "node ../dist/cli/index.js build",
+    "remote:build": "node ../dist/cli/index.js build",
+    "daytona:build": "npm run remote:build",
     "dev": "vite --host 127.0.0.1",
     "convex": "convex dev",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@convex-dev/daytona": "file:..",
+    "@convex-dev/remote-runner": "file:..",
     "@vitejs/plugin-react": "^5.1.1",
     "convex": "^1.37.0",
     "lucide-react": "^0.468.0",
