@@ -1,4 +1,4 @@
-import { defineRemoteHandler } from "@convex-dev/remote-runner/entry";
+import { defineRemoteHandler } from "@convex-dev/sandbox/entry";
 import { summarizeString } from "../remoteHelpers.js";
 
 export default defineRemoteHandler<{

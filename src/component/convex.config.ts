@@ -1,3 +1,3 @@
 import { defineComponent } from "convex/server";
 
-export default defineComponent("remoteRunner");
+export default defineComponent("sandbox");

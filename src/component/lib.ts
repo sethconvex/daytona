@@ -475,7 +475,7 @@ export const startCommand = action({
   },
 });
 
-export const getJob = internalQuery({
+export const getJob = query({
   args: { jobId: v.id("jobs") },
   returns: v.union(v.null(), jobValidator),
   handler: async (ctx, args) => {
@@ -542,7 +542,7 @@ export const listJobOutput = query({
   },
 });
 
-export const cancelJob = internalMutation({
+export const cancelJob = mutation({
   args: { jobId: v.id("jobs"), now: v.optional(v.number()) },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -927,6 +927,7 @@ export const failJob = internalMutation({
 
 export const registerCallbackSecret = mutation({
   args: {
+    capabilities: v.optional(v.array(v.string())),
     expiresAt: v.number(),
     secret: v.string(),
   },
@@ -938,12 +939,14 @@ export const registerCallbackSecret = mutation({
       .withIndex("by_secret", (q) => q.eq("secret", args.secret))
       .unique();
     if (existing) {
+      if (JSON.stringify(existing.capabilities ?? []) !== JSON.stringify(args.capabilities ?? [])) throw new Error("Callback secrets cannot be reused with different capabilities.");
       await ctx.db.patch(existing._id, {
         expiresAt: args.expiresAt,
       });
       return null;
     }
     await ctx.db.insert("callbackSecrets", {
+      capabilities: args.capabilities,
       createdAt: now,
       expiresAt: args.expiresAt,
       secret: args.secret,
@@ -2587,3 +2590,11 @@ function stripUndefined<T extends Record<string, unknown>>(value: T) {
     [K in keyof T as undefined extends T[K] ? K : K]: Exclude<T[K], undefined>;
   };
 }
+
+export const validateCallbackCapability = internalQuery({
+  args: { secret: v.string(), capability: v.string(), now: v.number() }, returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const record = await ctx.db.query("callbackSecrets").withIndex("by_secret", q => q.eq("secret", args.secret)).unique();
+    return Boolean(record && record.expiresAt > args.now && record.capabilities?.includes(args.capability));
+  },
+});

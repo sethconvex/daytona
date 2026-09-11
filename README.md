@@ -1,471 +1,260 @@
-# Convex Remote Runner Component
+# Convex Sandbox
 
-Run Convex action work in remote sandboxes when the default Convex runtime or `"use node"` is not the right execution environment.
+`@convex-dev/sandbox` provides a required Convex component, a server-side
+TypeScript client, and a separately deployed Daytona-backed service. The service
+owns provider credentials and execution; the component owns logical IDs,
+reactive run status, exported artifacts, and task callbacks.
 
-This component gives your app Convex actions a small sandbox runtime bridge:
+This repository contains an implementation and local integration tests. It is
+**not a launched Convex resell service**: production hosting, Convex invoice
+integration, and live Daytona acceptance testing are deployment work.
 
-- create or reuse remote sandboxes, or use Fly Sprites as a drop-in provider
-- run shell commands
-- run Python, TypeScript, or JavaScript snippets
-- keep provider credentials in your app environment instead of the component environment
+The existing `RemoteRunner`, `DaytonaRunner`, remote-handler APIs and CLI aliases
+remain exported. See [remote actions and migration](docs/remote-runner.md).
+The GitHub repository remains `sethconvex/daytona`.
 
-The Convex action still orchestrates the call, but the actual code or command
-runs inside the sandbox. The component talks to providers over `fetch`, so it
-can run in the standard Convex component runtime without provider Node SDKs.
+## Install
 
-## Installation
-
-```sh
-npm install @convex-dev/remote-runner
-```
-
-Install the component in `convex/convex.config.ts`:
+From a local checkout, run `npm install` and `npm run build`. The package has been
+renamed in this repository; this change does not publish it to npm.
 
 ```ts
-import remoteRunner from "@convex-dev/remote-runner/convex.config.js";
+// convex/convex.config.ts
 import { defineApp } from "convex/server";
-
+import sandbox from "@convex-dev/sandbox/convex.config";
 const app = defineApp();
-app.use(remoteRunner, { httpPrefix: "/remote-runner/" });
-
+app.use(sandbox);
 export default app;
 ```
 
-Set provider credentials on your Convex deployment:
-
-```sh
-npx convex env set DAYTONA_API_KEY your_key
+```ts
+// convex/sandbox.ts
+import { Sandbox, templates } from "@convex-dev/sandbox";
+import { components } from "./_generated/api";
+export const sandbox = new Sandbox(components.sandbox, {
+  defaults: {
+    template: templates.coding,
+    resources: "small",
+    idleTimeout: "10m",
+  },
+});
 ```
 
-You can also use `DAYTONA_JWT_TOKEN` with `DAYTONA_ORGANIZATION_ID`, plus optional `DAYTONA_API_URL` and `DAYTONA_TARGET`.
+Set `SANDBOX_SERVICE_URL` and `SANDBOX_SERVICE_TOKEN` in the application deployment.
+The Daytona API key belongs only on the service. App wrappers must authorize
+workspace, run, thread, and artifact access before invoking the component.
+An ID is not authorization.
 
-For the Fly Sprites provider, set:
-
-```sh
-npx convex env set SANDBOX_PROVIDER sprites
-npx convex env set SPRITES_TOKEN your_sprites_org_token
-```
-
-Or configure the runner explicitly:
+## Commands and workspaces
 
 ```ts
-const remote = new RemoteRunner(components.remoteRunner, {
-  auth: {
-    provider: "sprites",
-    spritesToken: process.env.SPRITES_TOKEN,
-  },
+// An Action can wait for a result.
+const result = await sandbox.run(ctx, {
+  command: ["python3", "-c", "print(2 + 2)"],
+  requestId: "business-operation/attempt-1",
 });
+
+// A mutation or Action can submit durable work and return immediately.
+const instance = await sandbox.create(ctx);
+await instance.files.write(ctx, {
+  path: "/workspace/hello.py",
+  contents: "print('hello')",
+});
+const runId = await instance.start(ctx, {
+  command: ["python3", "/workspace/hello.py"],
+  timeout: "1h",
+  requestId: "project-build/attempt-1",
+});
+const run = await sandbox.runs.get(ctx, runId); // query-compatible
+await sandbox.runs.cancel(ctx, runId); // requests termination
 ```
 
-The `runCommand`, `defineAction`, bundled action, and durable job APIs stay the
-same. Provider-specific sandbox fields are best-effort: Daytona honors image,
-network, resource, and language settings; Sprites currently creates a default
-Sprite and runs commands with HTTP exec.
+`create` allocates a logical ID; the first command or file operation starts
+compute. Save `instance.id` and reconstruct with `sandbox.fromId(id)`.
+`instance.suspend(ctx)` preserves files and resumes on the next operation.
+`instance.destroy(ctx)` deletes compute and workspace files. Active runs must
+finish or be canceled first. Exported artifacts have their own retention.
 
-### Rename From Daytona
+A matching `requestId` and payload returns the same run. Reusing the key for a
+different payload throws. An explicit retry uses a new key. Save the request ID
+before submission when recovery after an uncertain response matters.
 
-This package used to be named `@convex-dev/daytona`. The primary API is now
-provider-neutral:
+`run()` waits inside its calling Action and remains subject to that Action's
+limit. The accepted run continues independently. Use `start()` for long jobs,
+then query status or use task callbacks. No observer holds an Action open for
+the lifetime of the remote process.
 
-- `RemoteRunner` replaces `DaytonaRunner`
-- `defineRemoteHandler` replaces `defineDaytonaHandler`
-- `convex-remote-runner build` replaces `convex-daytona build`
-- `components.remoteRunner` replaces `components.daytona`
-- `convex/remote/` replaces `convex/daytona/`
+Run states are `queued`, `running`, `exited`, `timedOut`, `cancelled`, `failed`.
+Nonzero process exits remain `exited` results. `finalized` becomes true after
+exports and temporary cleanup. Cancellation is not reported as complete until
+termination is observed. Uncertain provider responses remain recoverable work.
 
-The old class, handler, and CLI names remain as compatibility aliases for now.
-
-## Usage
-
-Want to see the API shape in an app first? See the runnable demo in
-[`demo/`](./demo). It includes a Vite UI, a Convex backend, explicit npm
-package install, durable jobs, cancellation, DB context, and artifact records.
-
-The easiest API is `remote.defineAction`. You define a regular Convex action,
-but the handler function runs as JavaScript in a Node process inside a remote
-sandbox.
+## Files and artifacts
 
 ```ts
-import { RemoteRunner } from "@convex-dev/remote-runner";
-import { v } from "convex/values";
-import { components } from "./_generated/api.js";
-
-const remote = new RemoteRunner(components.remoteRunner, {
-  defaultCreate: {
-    ephemeral: true,
-    language: "javascript",
-    autoStopInterval: 15,
-  },
+const result = await sandbox.run(ctx, {
+  command: ["python3", "-c", "open('report.txt','w').write('done')"],
+  outputs: ["/workspace/report.txt"],
+  exportLogs: true,
+  artifactRetention: "7d",
 });
-
-export const analyzeRepo = remote.defineAction({
-  args: { name: v.string() },
-  returns: v.object({
-    greeting: v.string(),
-    node: v.string(),
-    files: v.array(v.string()),
-  }),
-  sandbox: { image: "node:22" },
-  packages: ["yaml"],
-  timeout: 30,
-  handler: async (ctx, { name }) => {
-    const os = await import("node:os");
-    await ctx.fs.writeFile("hello.txt", `hello ${name}`);
-    const listing = await ctx.exec("ls -1");
-    return {
-      greeting: `hello ${name} from the remote sandbox`,
-      node: `${process.version} on ${os.platform()}`,
-      files: listing.stdout.trim().split("\n"),
-    };
-  },
-});
+const id = result.artifacts[0].artifactId;
+const metadata = await sandbox.artifacts.get(ctx, id);
+const text = await sandbox.artifacts.readText(ctx, id);
+const url = await sandbox.artifacts.getUrl(ctx, id);
 ```
 
-Inside a `remote.defineAction` handler you can use Node globals, `fetch`,
-dynamic `import(...)`, `require(...)`, `ctx.fs`, and `ctx.exec(...)`. The
-handler is serialized and executed in a remote sandbox, so keep it self-contained: do
-not close over app variables or imported helpers. Pass data through `args`,
-`env`, `functions`, staged `files`, or a reused sandbox instead.
+Files support UTF-8 writes, base64 upload/download, bounded reads and search.
+Full logs stay in Daytona. Results contain bounded stdout/stderr previews and
+paths while the workspace exists. `exportLogs` exports stdout and stderr as
+ordinary artifacts. Temporary output paths are removed from finalized results.
+Missing or oversized selected outputs fail the job. Artifact exports use
+component-owned storage upload URLs; artifacts survive workspace deletion.
 
-Packages are explicit. Pass `packages: ["octokit"]` for the common npm path, or
-`install: { manager: "pnpm", packages: ["octokit"] }` /
-`install: { command: "npm ci" }` when you want control.
+Current limits are explicit implementation defaults: 16 KiB per output preview,
+512 KiB total inline inputs, 512 KiB file reads/writes, 32 MiB per exported
+artifact, 20 selected outputs plus two optional logs, 7-day default retention,
+and a 1-hour default command timeout. Durations accept `s/m/h/d`, up to 30 days.
+Large files should use artifact exports. Resource presets are:
 
-## Bundled Remote Actions
+| Preset | CPU | Memory | Disk   |
+| ------ | --- | ------ | ------ |
+| small  | 1   | 1 GiB  | 3 GiB  |
+| medium | 2   | 4 GiB  | 10 GiB |
+| large  | 4   | 8 GiB  | 20 GiB |
 
-Use bundled actions when you want remote code to be a real TypeScript module
-with imports, typechecking, and linting. Add a build step to the app using the
-component:
+Explicit resources replace the preset. Daytona accepts whole-GiB allocations;
+unsupported GPU names/configurations fail rather than silently downgrading.
+GPU availability and image compatibility remain subject to Daytona validation.
+
+## Templates
+
+Built-ins: `python` uses Python 3.13 on Debian; `node` uses Node 22 with Python 3
+for execution supervision; `coding` adds Git, curl, ripgrep and Python tooling.
+
+```ts
+const template = await sandbox.templates.start(ctx, {
+  name: "research",
+  base: "ubuntu-24.04",
+  runtimes: { python: "3.13", node: "22" },
+  packages: {
+    apt: ["ffmpeg"],
+    pip: ["pandas==2.2.3"],
+    npm: ["typescript@5.7.3"],
+  },
+});
+const status = await sandbox.templates.get(ctx, template.id);
+// After status.status === "ready":
+const workspace = await sandbox.create(ctx, { template: template.id });
+```
+
+Builds use Daytona snapshots and retain their image reference. Template IDs are
+content-derived and tenant-scoped. `build(ctx, spec)` also exists for callers
+that want to wait; use `start/get` for long builds. Build logs retain a 16 KiB
+preview. Python dependencies are installed into the image's managed Python;
+npm dependencies are global. Project lockfiles stay in the repository. Automatic
+template expiry and full build-log export are not implemented.
+
+## Agent tools
+
+```ts
+// In an @convex-dev/agent Agent definition:
+tools: {
+  sandbox: sandbox.tool({ agentComponent: "agent" });
+}
+// Or bind an application-owned workspace:
+tools: {
+  sandbox: sandbox.fromId(project.sandboxId).tool();
+}
+```
+
+The component allocates one workspace per explicit Agent-component name/thread
+pair, including concurrent first calls. Expired automatic workspaces are
+replaced and tools report `reset: true`. Normal operations are serialized;
+background commands return run IDs. `sandbox.codingTools()` exposes separate
+run/read/write/search/inspect/cancel tools using the same workspace.
+
+## Durable Task Protocol
+
+The task adapter implements the supplied mutation-handle protocol:
+
+```ts
+import { startTask } from "@convex-dev/sandbox";
+const task = await sandbox.task({ command: ["python3", "-c", "print(4)"] });
+const { id, cancel } = await startTask(ctx, task, {
+  onSuccess: internal.jobs.succeeded,
+  onFailure: internal.jobs.failed,
+  context: { projectId },
+});
+await ctx.runMutation(cancel, { id });
+```
+
+`task()` is asynchronous because Convex function-handle creation is asynchronous.
+Its resolved value is a serializable `{ name, start, config }` leaf task. It
+rejects a nonempty child `taskStack`. An orchestrator implementing the supplied
+protocol can consume it, e.g. `step.runTask(await sandbox.task(...))`; this
+package does not add `runTask` to existing Workflow releases.
+
+A committed success callback and delivery marker share a transaction. If success
+throws, the component schedules failure once. A deadline also covers dispatcher
+crashes. A throwing failure callback is not resubmitted; its scheduled-function
+ID remains on the run for diagnosis. Nonzero exits and timeouts return process
+results through success; canceled work uses `{ kind: "canceled" }` failure.
+
+## Run the service
+
+The service requires Node 22.13+ and a persistent SQLite filesystem. Run one
+service process per database. SQLite is a single-host deployment choice, not a
+multi-replica coordination layer.
+
+Create an operator-owned tenant file (restrict permissions; do not commit it):
 
 ```json
-{
-  "scripts": {
-    "remote:build": "convex-remote-runner build",
-    "dev": "npm run remote:build && convex dev",
-    "deploy": "npm run remote:build && convex deploy"
+[
+  {
+    "id": "customer-deployment",
+    "token": "a-random-service-token-at-least-32-characters-long",
+    "secrets": ["github-readonly"],
+    "uploadOrigins": ["https://YOUR-CONVEX-UPLOAD-ORIGIN"]
   }
-}
+]
 ```
 
-Create files under `convex/remote/`:
+The upload origin must exactly match the origin of upload URLs generated by
+that deployment's component storage. Arbitrary upload destinations and redirects
+are rejected. Use a separate tenant/token per application deployment/component
+installation. Rotate service tokens by restarting with an updated tenant file.
 
-```ts
-// convex/remote/getStringLength.ts
-import { defineRemoteHandler } from "@convex-dev/remote-runner/entry";
-import type { internal } from "../_generated/api.js";
-import { normalizeName } from "../lib/normalizeName.js";
+Set `DAYTONA_API_KEY`, `SANDBOX_TENANTS_FILE`, and `SANDBOX_DATABASE`, then:
 
-export default defineRemoteHandler<{
-  args: { userId: string; value: string };
-  returns: { email: string; length: number };
-  queries: {
-    getUser: typeof internal.users.get;
-  };
-}>(async (ctx, args) => {
-  const user = await ctx.queries.getUser({ userId: args.userId });
-  await ctx.exec("node --version");
-  return {
-    email: normalizeName(user.email),
-    length: args.value.length,
-  };
-});
+```sh
+npm run build
+npm run service
 ```
 
-Run `npm run remote:build`. The CLI bundles those modules and writes
-`convex/remote/_generated/manifest.ts`. Then wire the generated bundle into a
-normal Convex action:
+The service binds loopback by default. For deployment, set `HOST=0.0.0.0`, place
+it behind authenticated TLS termination, mount persistent storage, and supply
+secrets through the host's secret manager. `Dockerfile` provides a build target.
 
-```ts
-import { RemoteRunner } from "@convex-dev/remote-runner";
-import { v } from "convex/values";
-import { bundles } from "./remote/_generated/manifest.js";
-import { components, internal } from "./_generated/api.js";
+Daytona credential references are restricted to each tenant's registered names
+and require nonempty host allowlists. This supports Daytona's HTTPS-header
+substitution; **method/path policy is not implemented**. Do not expose credentials
+whose safety depends on those additional restrictions. There is no Convex invoice
+integration or production spend enforcement in this package yet.
 
-const remote = new RemoteRunner(components.remoteRunner);
+## Development and verification
 
-export const getStringLength = remote.defineBundledAction({
-  args: { userId: v.string(), value: v.string() },
-  returns: v.object({ email: v.string(), length: v.number() }),
-  bundle: bundles.getStringLength,
-  sandbox: { image: "node:22" },
-  functions: {
-    queries: {
-      getUser: internal.users.get,
-    },
-  },
-});
+```sh
+npm install
+npm run build
+npm test
+npm run typecheck
+npm run typecheck --workspace demo
 ```
 
-The bundled module can import pure helper modules from `convex/`, Node built-ins,
-and npm packages. It cannot runtime-import Convex server APIs like
-`convex/server`, `_generated/server`, or `_generated/api`; use type-only imports
-for function reference types and pass the actual function handles through
-`defineBundledAction({ functions })`.
-
-## Calling Back Into Convex
-
-To use `ctx.runQuery`, `ctx.runMutation`, or `ctx.runAction` from the remote sandbox,
-mount the component with an `httpPrefix` as shown above. The component owns a
-`POST /callback` route, exposed at `/remote-runner/callback` with that prefix.
-
-The action helper defaults the callback URL to
-`${CONVEX_SITE_URL}/remote-runner/callback` and mints a per-run callback secret that
-the component validates before running any function handle. You can also pass
-`callbackUrl` and `callbackSecret` to `new RemoteRunner(...)`, or set
-`REMOTE_RUNNER_CALLBACK_URL`, if you want to use an app-owned route instead.
-
-Register the functions this remote action is allowed to call, then call them
-by name from the remote-side `ctx`:
-
-```ts
-import { RemoteRunner } from "@convex-dev/remote-runner";
-import { v } from "convex/values";
-import { components, internal } from "./_generated/api.js";
-
-const remote = new RemoteRunner(components.remoteRunner);
-
-export const enrichUser = remote.defineAction({
-  args: { userId: v.id("users") },
-  returns: v.null(),
-  functions: {
-    queries: {
-      getUser: internal.users.get,
-    },
-    mutations: {
-      saveProfile: internal.users.saveProfile,
-    },
-  },
-  handler: async (ctx, { userId }) => {
-    const user = await ctx.queries.getUser<{ email: string }>({ userId });
-    const profile = await fetch(`https://example.com/profile/${user.email}`);
-    await ctx.mutations.saveProfile({
-      userId,
-      profile: await profile.json(),
-    });
-    return null;
-  },
-});
-```
-
-## Commands
-
-Use `runCommand` when you want a command-shaped primitive. It accepts one
-spec with sandbox input, output callbacks, capture, and callback auth in predictable
-places:
-
-```ts
-const result = await remote.runCommand(ctx, {
-  command: "npm test",
-  timeout: 30,
-  sandbox: {
-    create: { image: "node:22", autoStopInterval: 30 },
-    files: [
-      {
-        path: "package.json",
-        content: JSON.stringify({ scripts: { test: "node test.js" } }),
-      },
-      {
-        path: "test.js",
-        content: "console.log('ok')",
-      },
-    ],
-  },
-  install: { packages: ["typescript"] },
-  output: {
-    // Pass a normal Convex function reference. The client turns it into a
-    // function handle for the component.
-    onOutput: internal.events.commandOutput,
-  },
-  capture: {
-    path: "coverage",
-    maxBytes: 512 * 1024 * 1024,
-    uploadUrl,
-    onArtifact: internal.events.artifactReady,
-  },
-  callback: {
-    secret: "mint",
-  },
-});
-```
-
-The command result includes:
-
-```ts
-result.durationMs;
-result.result.exitCode;
-result.result.result; // stdout
-result.result.stderr;
-result.artifact; // when capture is set
-result.callbackSecret; // when callback.secret is "mint"
-```
-
-The output mutation receives:
-
-```ts
-{
-  runId: string,
-  sandboxId: string,
-  sequence: number,
-  stream: "stdout" | "stderr",
-  content: string,
-  timestamp: number,
-}
-```
-
-The artifact mutation receives:
-
-```ts
-{
-  path: string,
-  contentType: "application/gzip",
-  size: number,
-  uploadUrl?: string,
-  storageId?: string,
-}
-```
-
-## Admin Jobs
-
-Admin operations are page-based. Use `listJobs` for dashboards, and use
-`cancelJobs` when you explicitly want to process one bounded page yourself:
-
-```ts
-const page = await remote.listJobs(ctx, {
-  status: "running",
-  limit: 100,
-});
-
-const canceled = await remote.cancelJobs(ctx, {
-  status: "running",
-  beforeUpdatedAt: Date.now() - 10 * 60_000,
-  cursor: page.nextCursor,
-  limit: 100,
-});
-```
-
-For “cancel all old jobs” or cleanup flows, start a resumable cleanup run. The
-component stores progress and reschedules itself until all pages are processed:
-
-```ts
-const { cleanupId: cancelCleanupId } = await remote.cancelAllJobs(ctx, {
-  batchSize: 100,
-  olderThanMs: 10 * 60_000,
-});
-
-const { cleanupId } = await remote.startCleanup(ctx, {
-  batchSize: 100,
-  cancelActiveOlderThanMs: 10 * 60_000,
-  deleteCompletedOlderThanMs: 24 * 60 * 60_000,
-});
-```
-
-Poll cleanup status from a query:
-
-```ts
-const cleanup = await remote.getCleanup(ctx, { cleanupId });
-```
-
-Cleanup never scans all jobs in one function. It walks indexed pages, patches or
-deletes only the current batch, records counters, and schedules the next page.
-
-`seedDownloadUrl` is treated as a `tar.gz` archive and extracted before files
-are staged. `capture.uploadUrl` is a consumer-provided upload URL; generate it
-from your app when you want the archive in your own storage namespace.
-
-## Durable Remote Actions
-
-Use `defineDurableAction` when remote work should keep running after the
-calling action returns. It uses the same JavaScript handler shape as
-`defineAction`, but returns a component job id immediately. Output is stored as
-sequence-indexed rows, so UIs can fetch only new lines.
-
-```ts
-export const runBuild = remote.defineDurableAction({
-  args: { label: v.string() },
-  sandbox: { image: "node:22" },
-  packages: ["lodash"],
-  output: {
-    lineBuffered: true,
-    redact: {
-      env: ["OPENAI_API_KEY"],
-      patterns: ["dtn_[A-Za-z0-9_\\-]+"],
-    },
-  },
-  capture: { path: "coverage", uploadUrl },
-  handler: async (ctx, { label }) => {
-    const fs = ctx.require("node:fs") as typeof import("node:fs");
-    const lodash = ctx.require("lodash") as {
-      startCase(value: string): string;
-    };
-
-    fs.mkdirSync("coverage", { recursive: true });
-    for (let step = 1; step <= 30; step += 1) {
-      console.log("step " + step + "/30 for " + lodash.startCase(label));
-      fs.appendFileSync("coverage/report.txt", "completed step " + step + "\n");
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  },
-});
-
-export const buildStatus = query({
-  args: { jobId: v.string() },
-  handler: async (ctx, { jobId }) => {
-    return await remote.getJob(ctx, { jobId });
-  },
-});
-
-export const buildOutput = query({
-  args: {
-    afterSequence: v.optional(v.number()),
-    jobId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    return await remote.listJobOutput(ctx, args);
-  },
-});
-
-export const cancelBuild = mutation({
-  args: { jobId: v.string() },
-  handler: async (ctx, { jobId }) => {
-    await remote.cancelJob(ctx, { jobId });
-  },
-});
-```
-
-Canceling a queued job prevents it from starting. Canceling a running job marks
-it canceled and preserves that state; use a short Daytona timeout or delete the
-sandbox from your app if you need hard process termination.
-
-`startCommand` is still available when you want a lower-level command-shaped
-durable job.
-
-You can still use the small forms:
-
-```ts
-const sandbox = await remote.createSandbox(ctx, {
-  create: { language: "python", autoStopInterval: 30 },
-  files: [{ path: "hello.py", content: "print('hi')" }],
-});
-
-await remote.runCode(ctx, {
-  sandboxId: sandbox.id,
-  language: "python",
-  code: "print('kept warm')",
-  deleteSandboxAfter: false,
-});
-```
-
-By default, a sandbox created for a single `runCommand` or `runCode` call is deleted after the run. Pass `sandboxId` to reuse an existing sandbox, or set `deleteSandboxAfter: false`.
-
-## Direct Component API
-
-You can call the component functions directly from a Convex action:
-
-```ts
-await ctx.runAction(components.remoteRunner.lib.runCommand, {
-  auth: { apiKey: process.env.DAYTONA_API_KEY },
-  command: "echo hello",
-});
-```
-
-The direct API requires `auth` because Convex components do not inherit the app's environment variables.
+The test suite exercises real supervisor subprocesses, uncertain-response
+recovery, submission deduplication, tenant isolation, thread allocation,
+resource validation and DTP callbacks. `scripts/local-backend.mjs`,
+`scripts/local-service.mjs`, and `scripts/smoke.mjs` support a local end-to-end
+run/export/cleanup test. The local service harness executes trusted test commands
+on the developer machine; it is not a sandbox provider and must not be exposed.

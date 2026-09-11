@@ -1,3 +1,7 @@
+export { startTask } from "../sandbox/task.js";
+export type { Task, StartArgs, StartReturns, OnSuccessArgs, OnFailureArgs } from "../sandbox/task.js";
+export { Sandbox } from "../sandbox/client.js";
+export * from "../sandbox/types.js";
 import {
   actionGeneric,
   type ArgsArrayForOptionalValidator,
@@ -952,7 +956,7 @@ export class RemoteRunner {
 
     if (!callbackUrl) {
       throw new Error(
-        "To use ctx.runQuery/runMutation/runAction from a remote action, mount @convex-dev/remote-runner with httpPrefix \"/remote-runner/\", set CONVEX_SITE_URL, or pass callbackUrl to RemoteRunner.",
+        "To use ctx.runQuery/runMutation/runAction from a remote action, mount @convex-dev/sandbox with httpPrefix \"/remote-runner/\", set CONVEX_SITE_URL, or pass callbackUrl to RemoteRunner.",
       );
     }
     if (
@@ -967,7 +971,12 @@ export class RemoteRunner {
       );
     }
 
+    const functions = await createFunctionHandleMaps(args.functions);
+    const capabilities = Object.entries(functions).flatMap(([collection, handles]) =>
+      Object.values(handles).map(handle => `${({ queries: "query", mutations: "mutation", actions: "action" } as Record<string, string>)[collection]}:${handle}`),
+    ).sort();
     await ctx.runMutation(this.component.lib.registerCallbackSecret, {
+      capabilities,
       expiresAt:
         Date.now() +
         (args.callbackTtlMs ??
@@ -977,7 +986,7 @@ export class RemoteRunner {
     });
 
     return {
-      functions: await createFunctionHandleMaps(args.functions),
+      functions,
       secret: callbackSecret,
       url: callbackUrl,
     };

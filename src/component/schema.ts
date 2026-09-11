@@ -1,8 +1,66 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+import {
+  sandboxState,
+  runStatus,
+  resultValidator,
+} from "./sandboxValidators.js";
+
 export default defineSchema({
+  workspaces: defineTable({
+    config: v.string(),
+    state: sandboxState,
+    expiresAt: v.number(),
+    agentRunId: v.optional(v.id("runs")),
+    threadKey: v.optional(v.string()),
+    toolToken: v.optional(v.string()),
+    toolLeaseUntil: v.optional(v.number()),
+  }).index("by_threadKey", ["threadKey"]),
+  runs: defineTable({
+    sandboxId: v.id("workspaces"),
+    job: v.string(),
+    requestId: v.string(),
+    fingerprint: v.string(),
+    temporary: v.boolean(),
+    status: runStatus,
+    cancelRequested: v.boolean(),
+    finalized: v.boolean(),
+    leaseUntil: v.optional(v.number()),
+    leaseToken: v.optional(v.string()),
+    result: v.optional(resultValidator),
+    error: v.optional(v.string()),
+    taskCallbacks: v.optional(
+      v.object({
+        onSuccess: v.string(),
+        onFailure: v.string(),
+        context: v.any(),
+      }),
+    ),
+    delivery: v.optional(
+      v.union(
+        v.literal("delivering"),
+        v.literal("succeeded"),
+        v.literal("failureScheduled"),
+        v.literal("failed"),
+      ),
+    ),
+    failureScheduledId: v.optional(v.id("_scheduled_functions")),
+  })
+    .index("by_requestId", ["requestId"])
+    .index("by_sandboxId_status", ["sandboxId", "status"]),
+  artifacts: defineTable({
+    runId: v.id("runs"),
+    path: v.string(),
+    storageId: v.id("_storage"),
+    size: v.number(),
+    preview: v.string(),
+    expiresAt: v.number(),
+  })
+    .index("by_runId_path", ["runId", "path"])
+    .index("by_expiresAt", ["expiresAt"]),
   callbackSecrets: defineTable({
+    capabilities: v.optional(v.array(v.string())),
     createdAt: v.number(),
     expiresAt: v.number(),
     secret: v.string(),

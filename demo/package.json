@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@convex-dev/remote-runner": "file:..",
+    "@convex-dev/sandbox": "file:..",
     "@vitejs/plugin-react": "^5.1.1",
-    "convex": "^1.37.0",
+    "convex": "^1.45.0",
     "lucide-react": "^0.468.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

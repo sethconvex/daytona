@@ -63,6 +63,10 @@ http.route({
       );
     }
 
+    const allowed = await ctx.runQuery(internal.lib.validateCallbackCapability, {
+      secret, capability: `${body.kind}:${body.handle}`, now: Date.now(),
+    });
+    if (!allowed) return jsonResponse({ ok: false, error: { message: "Callback capability not granted." } }, 403);
     try {
       const args = body.args ?? {};
       const value =

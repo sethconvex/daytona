@@ -4,3 +4,6 @@ dist/
 *.tgz
 .env
 .DS_Store
+.local-test/
+.env.local
+*.sqlite*
