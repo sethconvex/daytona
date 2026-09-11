@@ -8,7 +8,10 @@
  * @module
  */
 
+import type * as http from "../http.js";
 import type * as lib from "../lib.js";
+import type * as sandboxValidators from "../sandboxValidators.js";
+import type * as sandboxes from "../sandboxes.js";
 
 import type {
   ApiFromModules,
@@ -18,14 +21,33 @@ import type {
 import { anyApi, componentsGeneric } from "convex/server";
 
 const fullApi: ApiFromModules<{
+  http: typeof http;
   lib: typeof lib;
+  sandboxValidators: typeof sandboxValidators;
+  sandboxes: typeof sandboxes;
 }> = anyApi as any;
 
+/**
+ * A utility for referencing Convex functions in your app's public API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
 export const api: FilterApi<
   typeof fullApi,
   FunctionReference<any, "public">
 > = anyApi as any;
 
+/**
+ * A utility for referencing Convex functions in your app's internal API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = internal.myModule.myFunction;
+ * ```
+ */
 export const internal: FilterApi<
   typeof fullApi,
   FunctionReference<any, "internal">

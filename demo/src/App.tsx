@@ -114,7 +114,7 @@ export function App() {
         </div>
         <div className="status">
           <Boxes size={18} />
-          <span>@convex-dev/remote-runner</span>
+          <span>@convex-dev/sandbox</span>
         </div>
       </section>
 
@@ -443,7 +443,7 @@ const durableJobExample = `export const runBuild = remote.defineDurableAction({
 });`;
 
 const spritesProviderExample = `// Same component API, different provider.
-const remote = new RemoteRunner(components.remoteRunner, {
+const remote = new RemoteRunner(components.sandbox, {
   auth: {
     provider: "sprites",
     spritesToken: process.env.SPRITES_TOKEN,

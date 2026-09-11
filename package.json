@@ -1,6 +1,6 @@
 {
-  "name": "@convex-dev/remote-runner",
-  "description": "A Convex component for running action work in remote sandboxes.",
+  "name": "@convex-dev/sandbox",
+  "description": "Convex Sandbox: durable Daytona workspaces, commands, and remote actions.",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -22,15 +22,19 @@
     "build:codegen": "convex codegen --component-dir ./src/component && npm run build",
     "clean": "rm -rf dist *.tsbuildinfo",
     "typecheck": "tsc --noEmit",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "service": "node dist/service/server.js"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "docs"
   ],
   "bin": {
     "convex-remote-runner": "./dist/cli/index.js",
-    "convex-daytona": "./dist/cli/index.js"
+    "convex-daytona": "./dist/cli/index.js",
+    "convex-sandbox": "./dist/cli/index.js"
   },
   "exports": {
     "./package.json": "./package.json",
@@ -56,20 +60,34 @@
     "./convex.config.js": {
       "types": "./dist/component/convex.config.d.ts",
       "default": "./dist/component/convex.config.js"
+    },
+    "./service": {
+      "types": "./dist/service/engine.d.ts",
+      "default": "./dist/service/engine.js"
     }
   },
   "dependencies": {
-    "esbuild": "^0.27.0"
+    "@convex-dev/agent": "^0.7.2",
+    "@daytona/sdk": "^0.211.2",
+    "esbuild": "^0.27.0",
+    "zod": "^4.6.2"
   },
   "peerDependencies": {
-    "convex": "^1.37.0"
+    "convex": "^1.45.0"
   },
   "devDependencies": {
-    "@types/node": "^24.12.2",
-    "convex": "1.37.0",
+    "@types/node": "^22.20.2",
+    "convex": "^1.45.0",
     "convex-test": "^0.0.47",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.0"
   },
   "types": "./dist/client/index.d.ts",
-  "module": "./dist/client/index.js"
+  "module": "./dist/client/index.js",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "workspaces": [
+    "demo"
+  ]
 }

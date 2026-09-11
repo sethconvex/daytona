@@ -1,4 +1,4 @@
-import remoteRunner from "@convex-dev/remote-runner/convex.config.js";
+import remoteRunner from "@convex-dev/sandbox/convex.config.js";
 import { defineApp } from "convex/server";
 
 const app = defineApp();

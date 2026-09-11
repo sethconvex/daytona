@@ -1,6 +1,6 @@
 # Convex Remote Runner Demo
 
-This is the canonical runnable demo app for `@convex-dev/remote-runner`.
+This is the canonical runnable demo app for `@convex-dev/sandbox`.
 
 It shows:
 

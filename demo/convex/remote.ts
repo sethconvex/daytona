@@ -1,4 +1,4 @@
-import { RemoteRunner } from "@convex-dev/remote-runner";
+import { RemoteRunner } from "@convex-dev/sandbox";
 import { anyApi, componentsGeneric } from "convex/server";
 import { v } from "convex/values";
 import { action, mutation, query } from "./_generated/server";
@@ -6,7 +6,7 @@ import { action, mutation, query } from "./_generated/server";
 const components = componentsGeneric();
 const internalApi = anyApi as any;
 
-const remote = new RemoteRunner(components.remoteRunner as any, {
+const remote = new RemoteRunner(components.sandbox as any, {
   defaultCreate: {
     autoStopInterval: 15,
     ephemeral: true,

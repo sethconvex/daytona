@@ -17,6 +17,7 @@ import type * as remote from "../remote.js";
 import type * as remote__generated_manifest from "../remote/_generated/manifest.js";
 import type * as remote_getStringLength from "../remote/getStringLength.js";
 import type * as remoteHelpers from "../remoteHelpers.js";
+import type * as sandboxSmoke from "../sandboxSmoke.js";
 
 import type {
   ApiFromModules,
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   "remote/_generated/manifest": typeof remote__generated_manifest;
   "remote/getStringLength": typeof remote_getStringLength;
   remoteHelpers: typeof remoteHelpers;
+  sandboxSmoke: typeof sandboxSmoke;
 }>;
 
 /**
@@ -63,5 +65,5 @@ export declare const internal: FilterApi<
 >;
 
 export declare const components: {
-  remoteRunner: import("@convex-dev/remote-runner/_generated/component.js").ComponentApi<"remoteRunner">;
+  sandbox: import("@convex-dev/sandbox/_generated/component.js").ComponentApi<"sandbox">;
 };
